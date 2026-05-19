@@ -1,0 +1,75 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+env:
+  PNPM_VERSION: 9.15.0
+
+jobs:
+  deploy-api:
+    name: Deploy API
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build API
+        run: pnpm --filter @alpha-kelassi/api build
+
+      - name: Deploy to Vercel (API)
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID_API }}
+          working-directory: apps/api
+          vercel-args: --prod
+
+  deploy-web:
+    name: Deploy Web (auto via Vercel Git Integration)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Vercel deploys automatically on push to main
+        run: echo "Web app deployed automatically by Vercel Git Integration"
+
+  build-mobile:
+    name: EAS Build (Android)
+    runs-on: ubuntu-latest
+    if: contains(github.event.head_commit.message, '[release]')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: EAS Build Android
+        working-directory: apps/mobile
+        run: eas build --platform android --profile preview --non-interactive
