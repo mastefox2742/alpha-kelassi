@@ -84,6 +84,22 @@ router.get('/:id', async (c) => {
   return c.json({ data: { ...doc, signed_url: signed?.signedUrl } })
 })
 
+// GET /api/documents/:id/exercises — chunks exercices pour contextualisation Kelassi
+router.get('/:id/exercises', async (c) => {
+  const id = c.req.param('id')
+
+  const { data: chunks, error } = await supabase
+    .from('document_chunks')
+    .select('id, content, chunk_index, page_number, metadata')
+    .eq('document_id', id)
+    .filter('metadata->>is_exercise', 'eq', 'true')
+    .order('chunk_index')
+    .limit(30)
+
+  if (error) return c.json({ error: { code: 'DB_ERROR', message: error.message } }, 500)
+  return c.json({ data: chunks ?? [] })
+})
+
 // GET /api/documents/:id/text — texte extrait pour mode hors-ligne
 router.get('/:id/text', async (c) => {
   const id = c.req.param('id')

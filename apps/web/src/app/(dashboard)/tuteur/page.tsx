@@ -27,14 +27,25 @@ export default function TuteurPage() {
   const [loading, setLoading] = useState(false)
   const [quotaRemaining, setQuotaRemaining] = useState<number | null>(null)
   const [sourcesCount, setSourcesCount] = useState(0)
+  const [exerciseContext, setExerciseContext] = useState<string | null>(null)
+  const autoSentRef = useRef(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const supabase = createClient()
 
-  // Pré-remplit la question si on vient d'une page cours/examen
+  // Pré-remplit depuis une page cours/examen ou depuis un bouton "Expliquer" par exercice
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const docId = params.get('document')
-    if (docId) setInput(`Explique-moi ce document.`)
+    const q = params.get('q')
+    const exerciseId = params.get('exercise')
+
+    if (q) {
+      const decoded = decodeURIComponent(q)
+      setInput(decoded)
+      if (exerciseId) setExerciseContext(exerciseId)
+    } else if (docId) {
+      setInput('Explique-moi ce document.')
+    }
   }, [])
 
   useEffect(() => {
@@ -70,6 +81,7 @@ export default function TuteurPage() {
     if (!input.trim() || loading) return
     const question = input.trim()
     setInput('')
+    setExerciseContext(null)
     setLoading(true)
 
     const userMsg: Message = { id: crypto.randomUUID(), role: 'user', content: question }
@@ -265,6 +277,13 @@ export default function TuteurPage() {
 
         {/* Input */}
         <div className="bg-white border-t px-4 py-3">
+          {exerciseContext && (
+            <div className="flex items-center gap-2 mb-2 px-3 py-2 bg-purple-50 border border-purple-100 rounded-xl text-xs text-purple-700">
+              <span>📋</span>
+              <span className="flex-1">Contexte exercice chargé — Kelassi répondra avec précision sur cet exercice.</span>
+              <button onClick={() => setExerciseContext(null)} className="text-purple-400 hover:text-purple-700">✕</button>
+            </div>
+          )}
           {quotaRemaining === 0 ? (
             <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
               <p className="text-sm text-amber-700">Limite journalière atteinte.</p>

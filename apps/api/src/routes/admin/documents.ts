@@ -104,6 +104,52 @@ router.put('/:id', zValidator('json', uploadSchema.partial()), async (c) => {
   return c.json({ data })
 })
 
+// PATCH /api/admin/documents/:id/corrige — upload du PDF corrigé
+router.patch('/:id/corrige', async (c) => {
+  const id = c.req.param('id')
+
+  const { data: doc } = await supabase.from('documents').select('id, is_premium').eq('id', id).single()
+  if (!doc) return c.json({ error: { code: 'NOT_FOUND', message: 'Document introuvable' } }, 404)
+
+  const formData = await c.req.formData()
+  const file = formData.get('file') as File | null
+  if (!file) return c.json({ error: { code: 'BAD_REQUEST', message: 'Fichier requis' } }, 400)
+
+  // Magic bytes PDF
+  const headerBytes = new Uint8Array(await file.slice(0, 4).arrayBuffer())
+  if (!String.fromCharCode(...headerBytes).startsWith('%PDF')) {
+    return c.json({ error: { code: 'INVALID_FILE', message: 'Le fichier doit être un PDF valide' } }, 400)
+  }
+
+  const safeName = file.name
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .replace(/\.{2,}/g, '_')
+    .replace(/^[._]+/, '')
+    .slice(0, 100)
+
+  const bucket = doc.is_premium ? 'pdfs-premium' : 'pdfs-public'
+  const fileName = `corrige_${Date.now()}_${safeName || 'corrige.pdf'}`
+  const arrayBuffer = await file.arrayBuffer()
+
+  const { error: storageError } = await supabase.storage
+    .from(bucket)
+    .upload(fileName, arrayBuffer, { contentType: 'application/pdf', upsert: false })
+
+  if (storageError) return c.json({ error: { code: 'UPLOAD_ERROR', message: storageError.message } }, 500)
+
+  const { data: { publicUrl } } = supabase.storage.from(bucket).getPublicUrl(fileName)
+
+  const { data, error } = await supabase
+    .from('documents')
+    .update({ corrige_url: publicUrl })
+    .eq('id', id)
+    .select()
+    .single()
+
+  if (error) return c.json({ error: { code: 'DB_ERROR', message: error.message } }, 500)
+  return c.json({ data })
+})
+
 // DELETE /api/admin/documents/:id
 router.delete('/:id', async (c) => {
   const id = c.req.param('id')
