@@ -81,6 +81,15 @@ router.post(
       .single()
 
     if (error) return c.json({ error: { code: 'DB_ERROR', message: error.message } }, 500)
+
+    // XP + badges en arrière-plan (non bloquant)
+    const xpAmount = quality >= 4 ? 3 : quality >= 3 ? 2 : 0
+    if (xpAmount > 0) {
+      const { awardXP, checkAndAwardBadges } = await import('../lib/xp.js')
+      awardXP(userId, xpAmount).catch(() => null)
+      checkAndAwardBadges(userId).catch(() => null)
+    }
+
     return c.json({ data: updated })
   }
 )

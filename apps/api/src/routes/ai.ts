@@ -190,9 +190,12 @@ router.post('/chat', async (c) => {
       controller.close()
 
       // Sauvegarde async après la fin du stream
+      const { awardXP, checkAndAwardBadges } = await import('../lib/xp.js')
       Promise.all([
         saveChatMessages(sessionId!, body.question, fullResponse),
-        redis.set(cacheKey, fullResponse, { ex: 86400 }), // TTL 24h
+        redis.set(cacheKey, fullResponse, { ex: 86400 }),
+        awardXP(userId, 2),
+        checkAndAwardBadges(userId),
       ]).catch(console.error)
     },
   })

@@ -81,6 +81,14 @@ router.get('/:id', async (c) => {
     .from(bucket)
     .createSignedUrl(filePath, 900)
 
+  // XP + tracking vue en arrière-plan
+  const { awardXP, trackDocumentView, checkAndAwardBadges } = await import('../lib/xp.js')
+  Promise.all([
+    trackDocumentView(userId, id),
+    awardXP(userId, 5),
+    checkAndAwardBadges(userId),
+  ]).catch(() => null)
+
   return c.json({ data: { ...doc, signed_url: signed?.signedUrl } })
 })
 
