@@ -5,6 +5,9 @@ import { secureHeaders } from 'hono/secure-headers'
 import { authRouter } from './routes/auth.js'
 import { billingRouter } from './routes/billing.js'
 import { webhooksRouter } from './routes/webhooks.js'
+import { subjectsRouter } from './routes/subjects.js'
+import { documentsRouter } from './routes/documents.js'
+import { adminDocumentsRouter } from './routes/admin/documents.js'
 
 const app = new Hono()
 
@@ -22,6 +25,9 @@ app.get('/health', (c) => c.json({ status: 'ok', service: 'alpha-kelassi-api' })
 
 app.route('/api/auth', authRouter)
 app.route('/api/billing', billingRouter)
+app.route('/api/subjects', subjectsRouter)
+app.route('/api/documents', documentsRouter)
+app.route('/api/admin/documents', adminDocumentsRouter)
 app.route('/webhooks', webhooksRouter)
 
 export default {
