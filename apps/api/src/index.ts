@@ -8,6 +8,10 @@ import { webhooksRouter } from './routes/webhooks.js'
 import { subjectsRouter } from './routes/subjects.js'
 import { documentsRouter } from './routes/documents.js'
 import { adminDocumentsRouter } from './routes/admin/documents.js'
+import { startEmbedWorker } from './jobs/embed-worker.js'
+
+// Démarre le worker BullMQ en arrière-plan
+startEmbedWorker()
 
 const app = new Hono()
 
