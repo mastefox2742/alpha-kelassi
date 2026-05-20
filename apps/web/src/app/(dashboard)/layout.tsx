@@ -7,6 +7,7 @@ const NAV = [
   { href: '/cours', label: 'Cours', icon: '📚' },
   { href: '/examens', label: 'Examens', icon: '📝' },
   { href: '/tuteur', label: 'Kelassi IA', icon: '🤖' },
+  { href: '/flashcards', label: 'Flashcards', icon: '🃏' },
   { href: '/billing', label: 'Premium', icon: '⭐' },
 ]
 

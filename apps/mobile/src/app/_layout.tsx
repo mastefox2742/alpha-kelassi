@@ -47,6 +47,7 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="cours/[id]" options={{ headerShown: true, title: '' }} />
         <Stack.Screen name="examens/[id]" options={{ headerShown: true, title: '' }} />
+        <Stack.Screen name="flashcards/index" options={{ headerShown: true, title: 'Flashcards' }} />
       </Stack>
       <StatusBar style="auto" />
     </DatabaseProvider>

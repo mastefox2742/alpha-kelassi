@@ -41,7 +41,7 @@ export default function HomeScreen() {
     { label: 'Cours', icon: '📚', color: '#eff6ff', route: '/(tabs)/cours' },
     { label: 'Examens', icon: '📝', color: '#f5f3ff', route: '/(tabs)/examens' },
     { label: 'Kelassi IA', icon: '🤖', color: '#f0fdf4', route: '/(tabs)/tuteur' },
-    { label: 'Profil', icon: '👤', color: '#fffbeb', route: '/(tabs)/profil' },
+    { label: 'Flashcards', icon: '🃏', color: '#fffbeb', route: '/flashcards/index' },
   ]
 
   return (

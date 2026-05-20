@@ -9,6 +9,7 @@ import { subjectsRouter } from './routes/subjects.js'
 import { documentsRouter } from './routes/documents.js'
 import { adminDocumentsRouter } from './routes/admin/documents.js'
 import { aiRouter } from './routes/ai.js'
+import { flashcardsRouter } from './routes/flashcards.js'
 import { startEmbedWorker } from './jobs/embed-worker.js'
 
 // Démarre le worker BullMQ en arrière-plan
@@ -34,6 +35,7 @@ app.route('/api/subjects', subjectsRouter)
 app.route('/api/documents', documentsRouter)
 app.route('/api/admin/documents', adminDocumentsRouter)
 app.route('/api/ai', aiRouter)
+app.route('/api/flashcards', flashcardsRouter)
 app.route('/webhooks', webhooksRouter)
 
 export default {
