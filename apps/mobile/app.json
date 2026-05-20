@@ -1,0 +1,52 @@
+{
+  "expo": {
+    "name": "Kelassi",
+    "slug": "kelassi",
+    "version": "1.0.0",
+    "scheme": "kelassi",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#2563eb"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.kelassi.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Utilisé pour scanner des documents",
+        "NSMicrophoneUsageDescription": "Utilisé pour les questions vocales"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#2563eb"
+      },
+      "package": "com.kelassi.app",
+      "permissions": ["INTERNET", "READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE"]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-file-system",
+        {}
+      ],
+      [
+        "@nozbe/watermelondb/native/ios",
+        {}
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "kelassi-mobile"
+      }
+    }
+  }
+}
