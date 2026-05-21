@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { redis } from '../lib/redis.js'
+import { authRateLimit } from '../middleware/rate-limit.js'
 
 const router = new Hono()
 
@@ -10,7 +11,7 @@ const sendOtpSchema = z.object({
 })
 
 // POST /api/auth/send-otp — envoi OTP via Africa's Talking
-router.post('/send-otp', zValidator('json', sendOtpSchema), async (c) => {
+router.post('/send-otp', authRateLimit, zValidator('json', sendOtpSchema), async (c) => {
   const { phone } = c.req.valid('json')
   const formattedPhone = phone.startsWith('+') ? phone : `+242${phone}`
 

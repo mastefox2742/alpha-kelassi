@@ -12,15 +12,21 @@ import { aiRouter } from './routes/ai.js'
 import { flashcardsRouter } from './routes/flashcards.js'
 import { progressRouter } from './routes/progress.js'
 import { adminAnalyticsRouter } from './routes/admin/analytics.js'
+import { accountRouter } from './routes/account.js'
 import { startEmbedWorker } from './jobs/embed-worker.js'
+import { initSentry } from './lib/monitoring.js'
+import { metricsMiddleware, getMetrics } from './middleware/metrics.js'
+import { chatRateLimit } from './middleware/rate-limit.js'
 
 // Démarre le worker BullMQ en arrière-plan
 startEmbedWorker()
+initSentry().catch(() => null)
 
 const app = new Hono()
 
 app.use('*', logger())
 app.use('*', secureHeaders())
+app.use('*', metricsMiddleware())
 app.use(
   '/api/*',
   cors({
@@ -31,6 +37,13 @@ app.use(
 
 app.get('/health', (c) => c.json({ status: 'ok', service: 'alpha-kelassi-api' }))
 
+// Endpoint Prometheus — accès restreint par IP ou token interne
+app.get('/metrics', (c) => {
+  const token = c.req.header('x-metrics-token')
+  if (token !== process.env['METRICS_TOKEN']) return c.text('Forbidden', 403)
+  return c.text(getMetrics(), 200, { 'Content-Type': 'text/plain; version=0.0.4' })
+})
+
 app.route('/api/auth', authRouter)
 app.route('/api/billing', billingRouter)
 app.route('/api/subjects', subjectsRouter)
@@ -40,6 +53,8 @@ app.route('/api/ai', aiRouter)
 app.route('/api/flashcards', flashcardsRouter)
 app.route('/api/progress', progressRouter)
 app.route('/api/admin/analytics', adminAnalyticsRouter)
+app.route('/api/account', accountRouter)
+app.use('/api/ai/chat', chatRateLimit)
 app.route('/webhooks', webhooksRouter)
 
 export default {

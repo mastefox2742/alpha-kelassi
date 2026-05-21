@@ -59,6 +59,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
           )}
         </nav>
         <div className="border-t pt-4 px-2 space-y-1">
+          <Link href="/compte/supprimer" className="block text-xs text-gray-400 hover:text-red-500 px-1">
+            Supprimer mon compte
+          </Link>
+          <div className="flex gap-3 text-xs text-gray-400">
+            <Link href="/cgu" className="hover:underline">CGU</Link>
+            <Link href="/confidentialite" className="hover:underline">Confidentialité</Link>
+          </div>
+        </div>
           <p className="text-xs font-medium text-gray-900 truncate">{profile?.full_name ?? user.email}</p>
           <div className="flex items-center gap-2">
             <span className={`text-xs px-2 py-0.5 rounded-full ${
