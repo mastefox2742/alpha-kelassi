@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { notFound, redirect } from 'next/navigation'
-import { PDFViewer } from './pdf-viewer'
+import { PDFViewerLazy as PDFViewer } from './pdf-viewer-lazy'
 import Link from 'next/link'
 
 export default async function CoursDetailPage({ params }: { params: Promise<{ id: string }> }) {

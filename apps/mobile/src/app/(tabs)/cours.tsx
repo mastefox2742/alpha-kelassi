@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, memo, useCallback } from 'react'
 import { FlatList, View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native'
 import { useRouter } from 'expo-router'
 import { supabase } from '../../lib/supabase'
@@ -7,6 +7,19 @@ import { database, DocumentModel } from '../../db'
 import { Q } from '@nozbe/watermelondb'
 
 interface Doc { id: string; title: string; type: string; level: string; year: number | null; is_premium: boolean }
+
+const CourseCard = memo(({ item, onPress }: { item: Doc; onPress: () => void }) => (
+  <TouchableOpacity style={styles.card} onPress={onPress}>
+    <View style={styles.cardLeft}>
+      <Text style={styles.cardIcon}>{item.type === 'examen' ? '📝' : '📖'}</Text>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.cardTitle} numberOfLines={2}>{item.title}</Text>
+        <Text style={styles.cardLevel}>{item.level.replace('_', ' ').toUpperCase()}{item.year ? ` · ${item.year}` : ''}</Text>
+      </View>
+    </View>
+    {item.is_premium && <Text style={styles.premium}>⭐</Text>}
+  </TouchableOpacity>
+))
 
 const LEVELS = ['', 'bepc', 'bac_a', 'bac_c', 'bac_d'] as const
 const LEVEL_LABELS: Record<string, string> = { '': 'Tous', bepc: 'BEPC', bac_a: 'BAC A', bac_c: 'BAC C', bac_d: 'BAC D' }
@@ -65,6 +78,13 @@ export default function CoursScreen() {
     return true
   })
 
+  const ITEM_HEIGHT = 82 // hauteur carte + gap
+  const getItemLayout = useCallback((_: unknown, index: number) => ({
+    length: ITEM_HEIGHT,
+    offset: ITEM_HEIGHT * index,
+    index,
+  }), [])
+
   if (loading) return <ActivityIndicator style={{ flex: 1 }} color="#2563eb" />
 
   return (
@@ -100,20 +120,13 @@ export default function CoursScreen() {
         data={filtered}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.list}
+        getItemLayout={getItemLayout}
+        initialNumToRender={12}
+        maxToRenderPerBatch={8}
+        windowSize={5}
+        removeClippedSubviews
         renderItem={({ item }) => (
-          <TouchableOpacity
-            style={styles.card}
-            onPress={() => router.push(`/cours/${item.id}` as any)}
-          >
-            <View style={styles.cardLeft}>
-              <Text style={styles.cardIcon}>{item.type === 'examen' ? '📝' : '📖'}</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.cardTitle} numberOfLines={2}>{item.title}</Text>
-                <Text style={styles.cardLevel}>{item.level.replace('_', ' ').toUpperCase()}{item.year ? ` · ${item.year}` : ''}</Text>
-              </View>
-            </View>
-            {item.is_premium && <Text style={styles.premium}>⭐</Text>}
-          </TouchableOpacity>
+          <CourseCard item={item} onPress={() => router.push(`/cours/${item.id}` as any)} />
         )}
         ListEmptyComponent={
           <View style={styles.empty}>

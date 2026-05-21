@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { PDFViewer } from '../../cours/[id]/pdf-viewer'
+import { PDFViewerLazy as PDFViewer } from '../../cours/[id]/pdf-viewer-lazy'
 
 interface ExerciseChunk {
   id: string
