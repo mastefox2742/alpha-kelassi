@@ -3,40 +3,39 @@ import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 
+export const maxDuration = 60 // secondes — extraction PDF peut être lente
+
 // Client admin (bypass RLS)
 const supabaseAdmin = createAdminClient(
   process.env['NEXT_PUBLIC_SUPABASE_URL']!,
   process.env['SUPABASE_SERVICE_ROLE_KEY']!
 )
 
-const uploadSchema = z.object({
-  subject_id: z.string().uuid(),
-  type: z.enum(['cours', 'examen']),
-  title: z.string().min(3),
-  level: z.enum(['bepc', 'bac_a', 'bac_c', 'bac_d']),
-  year: z.coerce.number().int().min(1990).max(2030).optional(),
-  session: z.enum(['normale', 'rattrapage']).optional(),
-  country_code: z.string().length(2).default('CG'),
-  is_premium: z.boolean().default(false),
+const saveSchema = z.object({
+  storagePath: z.string().min(1),
+  bucket: z.enum(['pdfs-premium', 'pdfs-public']),
+  meta: z.object({
+    subject_id: z.string().uuid(),
+    type: z.enum(['cours', 'examen']),
+    title: z.string().min(3),
+    level: z.enum(['bepc', 'bac_a', 'bac_c', 'bac_d']),
+    year: z.coerce.number().int().min(1990).max(2030).optional(),
+    session: z.enum(['normale', 'rattrapage']).optional(),
+    country_code: z.string().length(2).default('CG'),
+    is_premium: z.boolean().default(false),
+  }),
 })
 
-// Détection du format
-function detectFormat(filename: string, mime: string, header: Uint8Array): 'pdf' | 'docx' | 'txt' | null {
+function detectFormat(filename: string): 'pdf' | 'docx' | 'txt' | null {
   const ext = filename.split('.').pop()?.toLowerCase()
-  const isPdf = header[0] === 0x25 && header[1] === 0x50 && header[2] === 0x44 && header[3] === 0x46
-  const isDocx = header[0] === 0x50 && header[1] === 0x4B && header[2] === 0x03 && header[3] === 0x04
-
-  if (isPdf || ext === 'pdf') return 'pdf'
-  if (isDocx || ext === 'docx' || mime.includes('wordprocessingml')) return 'docx'
-  if (ext === 'txt' || mime.startsWith('text/')) return 'txt'
+  if (ext === 'pdf') return 'pdf'
+  if (ext === 'docx') return 'docx'
+  if (ext === 'txt') return 'txt'
   return null
 }
 
-// Extraction de texte
 async function extractText(buffer: Buffer, format: 'pdf' | 'docx' | 'txt'): Promise<string> {
-  if (format === 'txt') {
-    return buffer.toString('utf-8')
-  }
+  if (format === 'txt') return buffer.toString('utf-8')
   if (format === 'pdf') {
     const pdfParse = (await import('pdf-parse')).default
     const result = await pdfParse(buffer)
@@ -75,27 +74,30 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Admin requis' }, { status: 403 })
   }
 
-  // Parse form data
-  const formData = await req.formData()
-  const file = formData.get('file') as File | null
-  const metaRaw = formData.get('meta') as string | null
-
-  if (!file || !metaRaw) {
-    return NextResponse.json({ error: 'Fichier et métadonnées requis' }, { status: 400 })
-  }
-
-  let meta: z.infer<typeof uploadSchema>
+  // Parse JSON body
+  let body: z.infer<typeof saveSchema>
   try {
-    meta = uploadSchema.parse(JSON.parse(metaRaw))
+    const raw = await req.json()
+    body = saveSchema.parse(raw)
   } catch {
-    return NextResponse.json({ error: 'Métadonnées invalides' }, { status: 400 })
+    return NextResponse.json({ error: 'Corps de requête invalide' }, { status: 400 })
   }
 
-  const arrayBuffer = await file.arrayBuffer()
-  const buffer = Buffer.from(arrayBuffer)
-  const header = new Uint8Array(buffer.slice(0, 4))
-  const format = detectFormat(file.name, file.type, header)
+  const { storagePath, bucket, meta } = body
 
+  // Télécharge le fichier depuis Supabase Storage pour extraire le texte
+  const { data: fileData, error: downloadError } = await supabaseAdmin.storage
+    .from(bucket)
+    .download(storagePath)
+
+  if (downloadError || !fileData) {
+    return NextResponse.json({ error: `Fichier introuvable en storage : ${downloadError?.message}` }, { status: 404 })
+  }
+
+  const arrayBuffer = await fileData.arrayBuffer()
+  const buffer = Buffer.from(arrayBuffer)
+
+  const format = detectFormat(storagePath)
   if (!format) {
     return NextResponse.json({ error: 'Format non supporté. Utilisez PDF, DOCX ou TXT.' }, { status: 400 })
   }
@@ -112,32 +114,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Erreur extraction : ${(err as Error).message}` }, { status: 422 })
   }
 
-  // Nom de fichier sécurisé
-  const safeName = file.name
-    .replace(/[^a-zA-Z0-9._-]/g, '_')
-    .replace(/\.{2,}/g, '_')
-    .replace(/^[._]+/, '')
-    .slice(0, 100)
-
-  const contentTypeMap: Record<string, string> = {
-    pdf: 'application/pdf',
-    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    txt: 'text/plain; charset=utf-8',
-  }
-
-  const bucket = meta.is_premium ? 'pdfs-premium' : 'pdfs-public'
-  const fileName = `${Date.now()}_${safeName || `document.${format}`}`
-
-  // Upload Supabase Storage
-  const { error: storageError } = await supabaseAdmin.storage
-    .from(bucket)
-    .upload(fileName, arrayBuffer, { contentType: contentTypeMap[format], upsert: false })
-
-  if (storageError) {
-    return NextResponse.json({ error: storageError.message }, { status: 500 })
-  }
-
-  const { data: { publicUrl } } = supabaseAdmin.storage.from(bucket).getPublicUrl(fileName)
+  // URL publique
+  const { data: { publicUrl } } = supabaseAdmin.storage.from(bucket).getPublicUrl(storagePath)
 
   // Insert en base
   const { data: doc, error: dbError } = await supabaseAdmin

@@ -18,6 +18,9 @@ const nextConfig: NextConfig = {
     minimumCacheTTL: 86400,
   },
 
+  // pdf-parse et mammoth sont des libs Node.js pures — ne pas bundler avec webpack
+  serverExternalPackages: ['pdf-parse', 'mammoth'],
+
   // Réduit le JS importé pour les libs lourdes
   experimental: {
     optimizePackageImports: ['recharts', 'react-pdf', 'lucide-react'],

@@ -16,6 +16,7 @@ export function UploadForm({ subjects, onSuccess }: Props) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
   const [loading, setLoading] = useState(false)
+  const [progress, setProgress] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [form, setForm] = useState({
     subject_id: '',
@@ -38,31 +39,53 @@ export function UploadForm({ subjects, onSuccess }: Props) {
     setLoading(true)
     setError(null)
 
-    const meta = {
-      ...form,
-      year: form.year ? parseInt(form.year) : undefined,
-      session: form.session || undefined,
-    }
+    try {
+      // Étape 1 : obtenir une URL d'upload signée depuis Supabase
+      setProgress('Préparation de l\'upload…')
+      const presignRes = await fetch(
+        `/api/admin/documents/presign?filename=${encodeURIComponent(file.name)}&premium=${form.is_premium}`
+      )
+      const presignJson = await presignRes.json() as { signedUrl?: string; path?: string; bucket?: string; error?: string }
+      if (!presignRes.ok) throw new Error(presignJson.error ?? 'Erreur presign')
 
-    const fd = new FormData()
-    fd.append('file', file)
-    fd.append('meta', JSON.stringify(meta))
+      const { signedUrl, path: storagePath, bucket } = presignJson as { signedUrl: string; path: string; bucket: string }
 
-    const res = await fetch('/api/admin/documents', {
-      method: 'POST',
-      body: fd,
-    })
+      // Étape 2 : upload direct vers Supabase Storage (pas de limite de taille)
+      setProgress('Upload du fichier…')
+      const uploadRes = await fetch(signedUrl, {
+        method: 'PUT',
+        body: file,
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      })
+      if (!uploadRes.ok) throw new Error(`Erreur upload storage (${uploadRes.status})`)
 
-    const json = await res.json() as { error?: string; data?: unknown }
-    if (!res.ok) {
-      setError(json.error ?? 'Erreur upload')
-    } else {
+      // Étape 3 : extraction texte + sauvegarde en base
+      setProgress('Extraction du texte…')
+      const meta = {
+        ...form,
+        year: form.year ? parseInt(form.year) : undefined,
+        session: form.session || undefined,
+      }
+
+      const saveRes = await fetch('/api/admin/documents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ storagePath, bucket, meta }),
+      })
+      const saveJson = await saveRes.json() as { error?: string; data?: unknown }
+      if (!saveRes.ok) throw new Error(saveJson.error ?? 'Erreur sauvegarde')
+
+      // Succès
       setFile(null)
       if (fileRef.current) fileRef.current.value = ''
       setForm((f) => ({ ...f, title: '', year: '', session: '' }))
       onSuccess()
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setLoading(false)
+      setProgress(null)
     }
-    setLoading(false)
   }
 
   return (
@@ -93,7 +116,7 @@ export function UploadForm({ subjects, onSuccess }: Props) {
             className="w-full border rounded-lg px-3 py-2 text-sm"
           >
             <option value="cours">Cours</option>
-            <option value="examen">Examen d'État</option>
+            <option value="examen">Examen d&apos;État</option>
           </select>
         </div>
 
@@ -167,7 +190,7 @@ export function UploadForm({ subjects, onSuccess }: Props) {
 
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">
-          Fichier <span className="text-gray-400 font-normal">(PDF, DOCX ou TXT)</span>
+          Fichier <span className="text-gray-400 font-normal">(PDF, DOCX ou TXT — taille illimitée)</span>
         </label>
         <input
           ref={fileRef}
@@ -192,7 +215,7 @@ export function UploadForm({ subjects, onSuccess }: Props) {
         disabled={loading}
         className="w-full py-2.5 bg-blue-600 text-white rounded-lg font-medium text-sm hover:bg-blue-700 disabled:opacity-50"
       >
-        {loading ? 'Upload en cours...' : 'Uploader le document'}
+        {loading ? (progress ?? 'Upload en cours…') : 'Uploader le document'}
       </button>
     </form>
   )
