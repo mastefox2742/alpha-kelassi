@@ -37,10 +37,14 @@ function detectFormat(filename: string): 'pdf' | 'docx' | 'txt' | null {
 async function extractText(buffer: Buffer, format: 'pdf' | 'docx' | 'txt'): Promise<string> {
   if (format === 'txt') return buffer.toString('utf-8')
   if (format === 'pdf') {
-    // Utiliser pdfjs-dist directement (déjà installé via react-pdf).
-    // pdf-parse bundlait une vieille version de pdfjs incompatible avec Node.js 20.
+    // pdfjs-dist en Node.js : require.resolve donne le chemin absolu du worker
+    // au runtime (pas bundlé grâce à serverExternalPackages).
+    // pdfjs utilise worker_threads avec ce chemin → pas besoin de Web Worker.
     const pdfjs = await import('pdfjs-dist')
-    pdfjs.GlobalWorkerOptions.workerSrc = '' // pas de worker Web en serverless
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    pdfjs.GlobalWorkerOptions.workerSrc = require.resolve(
+      'pdfjs-dist/build/pdf.worker.min.mjs'
+    )
 
     const doc = await pdfjs.getDocument({
       data: new Uint8Array(buffer),
