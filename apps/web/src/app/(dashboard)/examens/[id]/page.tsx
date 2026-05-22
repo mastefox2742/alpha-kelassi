@@ -3,6 +3,7 @@ import { notFound, redirect } from 'next/navigation'
 import Link from 'next/link'
 import { ExamenViewer } from './examen-viewer'
 import { FreeLimitGate } from '@/components/free-limit-gate'
+import { DocumentReaderClient } from '@/components/document-reader-client'
 
 const LEVEL_CONFIG: Record<string, { label: string; bg: string; color: string }> = {
   bepc:  { label: 'BEPC',  bg: 'bg-blue-100',   color: 'text-blue-700' },
@@ -72,6 +73,10 @@ export default async function ExamenDetailPage({ params }: { params: Promise<{ i
   const lvl = LEVEL_CONFIG[doc.level] ?? { label: doc.level, bg: 'bg-gray-100', color: 'text-gray-600' }
   const subjectName = (doc.subjects as { name: string } | null)?.name
   const hasCorrige = !!doc.corrige_url
+
+  // Vérifie si le fichier est un PDF (sinon : DOCX ou TXT → afficher text_content)
+  const isPdf = doc.pdf_url?.toLowerCase().endsWith('.pdf') ?? false
+  const textContent = (doc as Record<string, unknown>).text_content as string | null
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
@@ -146,7 +151,8 @@ export default async function ExamenDetailPage({ params }: { params: Promise<{ i
 
       {/* Visionneuse avec gate freemium */}
       <FreeLimitGate type="exam" plan={plan}>
-        {enonceUrl ? (
+        {isPdf && enonceUrl ? (
+          /* Fichier PDF → visionneuse PDF avec exercices */
           <ExamenViewer
             docId={doc.id}
             title={doc.title}
@@ -157,9 +163,16 @@ export default async function ExamenDetailPage({ params }: { params: Promise<{ i
             corrigeIsPremium={!!doc.is_premium}
             exercises={exercises ?? []}
           />
+        ) : textContent ? (
+          /* Fichier DOCX / TXT → afficher le texte extrait comme pour les cours */
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <DocumentReaderClient text={textContent} />
+          </div>
         ) : (
           <div className="bg-gray-100 rounded-xl p-8 text-center text-gray-400">
-            PDF indisponible pour le moment. Réessaie dans quelques instants.
+            <p className="text-2xl mb-2">⏳</p>
+            <p className="font-medium text-gray-600">Contenu en cours de traitement</p>
+            <p className="text-sm mt-1">Reviens dans quelques instants.</p>
           </div>
         )}
       </FreeLimitGate>
