@@ -1,14 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
 import { notFound, redirect } from 'next/navigation'
-import dynamic from 'next/dynamic'
 import { FreeLimitGate } from '@/components/free-limit-gate'
+import { DocumentReaderClient } from '@/components/document-reader-client'
 import Link from 'next/link'
-
-// DocumentReader chargé côté client (imports KaTeX CSS)
-const DocumentReader = dynamic(
-  () => import('@/components/document-reader').then((m) => m.DocumentReader),
-  { ssr: false, loading: () => <DocumentSkeleton /> }
-)
 
 const LEVEL_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
   bepc:  { label: 'BEPC',  color: 'text-blue-700',   bg: 'bg-blue-100' },
@@ -142,7 +136,7 @@ export default async function CoursDetailPage({ params }: { params: Promise<{ id
       <FreeLimitGate type="cours" plan={plan}>
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
           {hasText ? (
-            <DocumentReader
+            <DocumentReaderClient
               text={(doc as Record<string, unknown>).text_content as string}
             />
           ) : (
@@ -171,16 +165,3 @@ export default async function CoursDetailPage({ params }: { params: Promise<{ id
   )
 }
 
-function DocumentSkeleton() {
-  return (
-    <div className="px-5 py-8 animate-pulse space-y-4 max-w-3xl mx-auto">
-      <div className="h-5 bg-gray-100 rounded w-2/3" />
-      <div className="h-4 bg-gray-100 rounded w-full" />
-      <div className="h-4 bg-gray-100 rounded w-5/6" />
-      <div className="h-4 bg-gray-100 rounded w-4/5" />
-      <div className="h-5 bg-gray-100 rounded w-1/2 mt-6" />
-      <div className="h-4 bg-gray-100 rounded w-full" />
-      <div className="h-4 bg-gray-100 rounded w-3/4" />
-    </div>
-  )
-}
