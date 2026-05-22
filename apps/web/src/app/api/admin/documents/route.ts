@@ -37,7 +37,10 @@ function detectFormat(filename: string): 'pdf' | 'docx' | 'txt' | null {
 async function extractText(buffer: Buffer, format: 'pdf' | 'docx' | 'txt'): Promise<string> {
   if (format === 'txt') return buffer.toString('utf-8')
   if (format === 'pdf') {
-    const pdfParse = (await import('pdf-parse')).default
+    // Importer le fichier lib directement évite que pdf-parse/index.js
+    // charge ses fichiers de test (cause du "unsupported Unicode escape sequence")
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pdfParse = require('pdf-parse/lib/pdf-parse')
     const result = await pdfParse(buffer)
     return result.text
   }
@@ -134,5 +137,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: dbError.message }, { status: 500 })
   }
 
-  return NextResponse.json({ data: doc }, { status: 201 })
+  // On ne renvoie pas text_content (peut contenir des séquences Unicode invalides)
+  const { text_content: _, ...docSafe } = doc as Record<string, unknown>
+  return NextResponse.json({ data: docSafe }, { status: 201 })
 }

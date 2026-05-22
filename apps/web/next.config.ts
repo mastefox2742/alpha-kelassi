@@ -26,6 +26,20 @@ const nextConfig: NextConfig = {
     optimizePackageImports: ['recharts', 'react-pdf', 'lucide-react'],
   },
 
+  // pdf-parse : son index.js require() ses propres fichiers de test, ce qui
+  // cause "unsupported Unicode escape sequence" dans webpack.
+  // On force l'externalisation côté webpack en plus de serverExternalPackages.
+  webpack(config, { isServer }) {
+    if (isServer) {
+      config.externals = [
+        ...(Array.isArray(config.externals) ? config.externals : [config.externals].filter(Boolean)),
+        'pdf-parse',
+        'mammoth',
+      ]
+    }
+    return config
+  },
+
   async headers() {
     const csp = [
       "default-src 'self'",
