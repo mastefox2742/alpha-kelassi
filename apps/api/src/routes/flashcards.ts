@@ -1,23 +1,23 @@
-import { Hono } from 'hono'
+﻿import { Hono } from 'hono'
+import type { AppVariables } from '../lib/types.js'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import { GoogleGenAI } from '@google/genai'
 import { authMiddleware } from '../middleware/auth.js'
-import { supabase } from '../lib/supabase.js'
+
 import { computeSM2 } from '../lib/sm2.js'
 
-const router = new Hono()
-const genai = new GoogleGenerativeAI(process.env['GEMINI_API_KEY']!)
+const router = new Hono<{ Variables: AppVariables }>()
+const genai = new GoogleGenAI({ apiKey: process.env['GEMINI_API_KEY']! })
 
 router.use('*', authMiddleware)
 
-// GET /flashcards/due — cartes à réviser aujourd'hui
+// GET /flashcards/due â€” cartes Ã  rÃ©viser aujourd'hui
 router.get('/due', async (c) => {
   const userId = c.get('userId') as string
   const limit = parseInt(c.req.query('limit') ?? '20', 10)
 
-  const { data, error } = await supabase
-    .from('flashcards')
+  const { data, error } = await c.get('supabase').from('flashcards')
     .select('*, documents(title, subjects(name))')
     .eq('user_id', userId)
     .lte('next_review', new Date().toISOString())
@@ -28,13 +28,12 @@ router.get('/due', async (c) => {
   return c.json({ data: data ?? [], count: data?.length ?? 0 })
 })
 
-// GET /flashcards — toutes les cartes (avec filtre optionnel)
+// GET /flashcards â€” toutes les cartes (avec filtre optionnel)
 router.get('/', async (c) => {
   const userId = c.get('userId') as string
   const documentId = c.req.query('document_id')
 
-  let query = supabase
-    .from('flashcards')
+  let query = c.get('supabase').from('flashcards')
     .select('*, documents(title, subjects(name))')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
@@ -46,7 +45,7 @@ router.get('/', async (c) => {
   return c.json({ data: data ?? [] })
 })
 
-// POST /flashcards/review — enregistre une révision SM-2
+// POST /flashcards/review â€” enregistre une rÃ©vision SM-2
 router.post(
   '/review',
   zValidator('json', z.object({ flashcard_id: z.string().uuid(), quality: z.number().int().min(0).max(5) })),
@@ -54,8 +53,7 @@ router.post(
     const userId = c.get('userId') as string
     const { flashcard_id, quality } = c.req.valid('json')
 
-    const { data: card } = await supabase
-      .from('flashcards')
+    const { data: card } = await c.get('supabase').from('flashcards')
       .select('ease_factor, interval, reps')
       .eq('id', flashcard_id)
       .eq('user_id', userId)
@@ -68,8 +66,7 @@ router.post(
       quality
     )
 
-    const { data: updated, error } = await supabase
-      .from('flashcards')
+    const { data: updated, error } = await c.get('supabase').from('flashcards')
       .update({
         ease_factor: result.easeFactor,
         interval: result.interval,
@@ -82,7 +79,7 @@ router.post(
 
     if (error) return c.json({ error: { code: 'DB_ERROR', message: error.message } }, 500)
 
-    // XP + badges en arrière-plan (non bloquant)
+    // XP + badges en arriÃ¨re-plan (non bloquant)
     const xpAmount = quality >= 4 ? 3 : quality >= 3 ? 2 : 0
     if (xpAmount > 0) {
       const { awardXP, checkAndAwardBadges } = await import('../lib/xp.js')
@@ -94,7 +91,7 @@ router.post(
   }
 )
 
-// POST /flashcards/generate — génère des flashcards depuis un document
+// POST /flashcards/generate â€” gÃ©nÃ¨re des flashcards depuis un document
 router.post(
   '/generate',
   zValidator('json', z.object({ document_id: z.string().uuid(), count: z.number().int().min(1).max(20).default(10) })),
@@ -102,28 +99,26 @@ router.post(
     const userId = c.get('userId') as string
     const { document_id, count } = c.req.valid('json')
 
-    // Récupère les chunks du document
-    const { data: chunks } = await supabase
-      .from('document_chunks')
+    // RÃ©cupÃ¨re les chunks du document
+    const { data: chunks } = await c.get('supabase').from('document_chunks')
       .select('content')
       .eq('document_id', document_id)
       .order('chunk_index', { ascending: true })
       .limit(30)
 
     if (!chunks || chunks.length === 0) {
-      return c.json({ error: { code: 'NOT_INDEXED', message: 'Ce document n\'est pas encore indexé. Réessaie dans quelques minutes.' } }, 422)
+      return c.json({ error: { code: 'NOT_INDEXED', message: 'Ce document n\'est pas encore indexÃ©. RÃ©essaie dans quelques minutes.' } }, 422)
     }
 
     const context = chunks.map((c) => c.content).join('\n\n---\n\n').slice(0, 8000)
 
-    const model = genai.getGenerativeModel({ model: 'gemini-2.0-flash' })
-    const prompt = `Tu es un expert pédagogique. À partir du contenu de cours ci-dessous, génère exactement ${count} flashcards pour aider un élève congolais à réviser.
+    const prompt = `Tu es un expert pÃ©dagogique. Ã€ partir du contenu de cours ci-dessous, gÃ©nÃ¨re exactement ${count} flashcards pour aider un Ã©lÃ¨ve congolais Ã  rÃ©viser.
 
-Règles :
-- Recto (front) : question courte et précise (max 120 caractères)
-- Verso (back) : réponse concise (max 300 caractères), avec un exemple concret si possible
-- Couvre les concepts clés, définitions et formules importantes
-- Varie les types : définition, application, exemple, calcul
+RÃ¨gles :
+- Recto (front) : question courte et prÃ©cise (max 120 caractÃ¨res)
+- Verso (back) : rÃ©ponse concise (max 300 caractÃ¨res), avec un exemple concret si possible
+- Couvre les concepts clÃ©s, dÃ©finitions et formules importantes
+- Varie les types : dÃ©finition, application, exemple, calcul
 
 Retourne UNIQUEMENT un tableau JSON valide, sans markdown, sans commentaires :
 [{"front":"...","back":"..."},...]
@@ -131,8 +126,11 @@ Retourne UNIQUEMENT un tableau JSON valide, sans markdown, sans commentaires :
 Contenu du cours :
 ${context}`
 
-    const result = await model.generateContent(prompt)
-    const raw = result.response.text().trim()
+    const response = await genai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    })
+    const raw = response.text ?? ''
 
     let cards: Array<{ front: string; back: string }>
     try {
@@ -140,7 +138,7 @@ ${context}`
       cards = JSON.parse(jsonStr)
       if (!Array.isArray(cards)) throw new Error('Not an array')
     } catch {
-      return c.json({ error: { code: 'GENERATION_ERROR', message: 'Erreur de génération. Réessaie.' } }, 500)
+      return c.json({ error: { code: 'GENERATION_ERROR', message: 'Erreur de gÃ©nÃ©ration. RÃ©essaie.' } }, 500)
     }
 
     const rows = cards.slice(0, count).map((card) => ({
@@ -150,8 +148,7 @@ ${context}`
       back: card.back,
     }))
 
-    const { data: inserted, error: dbError } = await supabase
-      .from('flashcards')
+    const { data: inserted, error: dbError } = await c.get('supabase').from('flashcards')
       .insert(rows)
       .select()
 
@@ -164,8 +161,10 @@ ${context}`
 router.delete('/:id', async (c) => {
   const userId = c.get('userId') as string
   const id = c.req.param('id')
-  await supabase.from('flashcards').delete().eq('id', id).eq('user_id', userId)
+  await c.get('supabase').from('flashcards').delete().eq('id', id).eq('user_id', userId)
   return c.json({ data: { deleted: true } })
 })
 
 export { router as flashcardsRouter }
+
+

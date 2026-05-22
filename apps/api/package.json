@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch --env-file .env.local src/index.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
     "type-check": "tsc --noEmit",
@@ -12,13 +12,17 @@
   },
   "dependencies": {
     "@alpha-kelassi/types": "workspace:*",
+    "@google/genai": "^2.6.0",
     "@google/generative-ai": "^0.21.0",
+    "@hono/node-server": "^2.0.3",
+    "@hono/zod-validator": "^0.4.3",
+    "@sentry/node": "^8.0.0",
     "@supabase/supabase-js": "^2.45.0",
     "@upstash/redis": "^1.34.0",
     "bullmq": "^5.0.0",
     "hono": "^4.6.0",
+    "mammoth": "^1.12.0",
     "pdf-parse": "^1.1.1",
-    "@sentry/node": "^8.0.0",
     "stripe": "^17.0.0",
     "zod": "^3.23.0"
   },

@@ -1,112 +1,166 @@
 import { createClient } from '@/lib/supabase/server'
+import { redirect } from 'next/navigation'
 import Link from 'next/link'
+
+const SHORTCUTS = [
+  { href: '/cours',      label: 'Cours',       icon: '📚', gradient: 'from-blue-500 to-blue-600',    bg: 'bg-blue-50',   text: 'text-blue-700' },
+  { href: '/examens',    label: 'Examens',      icon: '📝', gradient: 'from-violet-500 to-violet-600', bg: 'bg-violet-50', text: 'text-violet-700' },
+  { href: '/tuteur',     label: 'Kelassi IA',   icon: '🤖', gradient: 'from-emerald-500 to-emerald-600', bg: 'bg-emerald-50', text: 'text-emerald-700' },
+  { href: '/flashcards', label: 'Flashcards',   icon: '🃏', gradient: 'from-amber-500 to-orange-500', bg: 'bg-amber-50',  text: 'text-amber-700' },
+]
 
 export default async function DashboardPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
   const [{ data: profile }, { data: progress }, { data: recentDocs }] = await Promise.all([
-    supabase.from('users').select('full_name, plan').eq('id', user!.id).single(),
+    supabase.from('users').select('full_name, plan, onboarding_completed').eq('id', user!.id).single(),
     supabase.from('user_progress').select('*, subjects(name)').eq('user_id', user!.id).limit(5),
     supabase.from('documents').select('id, title, type, level').eq('is_premium', false).order('created_at', { ascending: false }).limit(4),
   ])
 
+  // Redirige les nouveaux utilisateurs vers l'onboarding
+  if (profile && !profile.onboarding_completed) redirect('/onboarding')
+
   const hour = new Date().getHours()
   const greeting = hour < 12 ? 'Bonjour' : hour < 18 ? 'Bon après-midi' : 'Bonsoir'
+  const firstName = profile?.full_name?.split(' ')[0] ?? 'Élève'
 
   return (
-    <div className="max-w-4xl mx-auto px-6 py-8">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold">
-          {greeting}, {profile?.full_name?.split(' ')[0] ?? 'Élève'} 👋
-        </h1>
-        <p className="text-gray-500 text-sm mt-1">Prêt à réviser aujourd'hui ?</p>
+    <div className="px-6 py-8 max-w-5xl mx-auto space-y-8">
+
+      {/* ── HERO GREETING ── */}
+      <div className="relative bg-gradient-to-br from-blue-600 via-blue-700 to-violet-700 rounded-3xl px-8 py-10 overflow-hidden">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full -translate-y-1/2 translate-x-1/4 pointer-events-none" />
+        <div className="absolute bottom-0 left-1/2 w-48 h-48 bg-white/5 rounded-full translate-y-1/2 pointer-events-none" />
+        <div className="relative">
+          <p className="text-blue-200 text-sm font-medium mb-1">{greeting} 👋</p>
+          <h1 className="text-3xl font-black text-white mb-2">{firstName}</h1>
+          <p className="text-blue-100 text-sm max-w-xs">Prêt à réviser aujourd'hui ? Continue là où tu t'es arrêté.</p>
+          {profile?.plan === 'free' && (
+            <Link
+              href="/billing"
+              className="inline-flex items-center gap-2 mt-5 bg-white text-blue-700 font-bold text-sm px-5 py-2.5 rounded-xl hover:bg-blue-50 transition-colors"
+            >
+              ⭐ Passer Premium — 2 000 FCFA/mois
+            </Link>
+          )}
+        </div>
       </div>
 
-      {/* Raccourcis */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
-        {[
-          { href: '/cours', label: 'Cours', icon: '📚', color: 'bg-blue-50' },
-          { href: '/examens', label: 'Examens', icon: '📝', color: 'bg-purple-50' },
-          { href: '/tuteur', label: 'Kelassi IA', icon: '🤖', color: 'bg-green-50' },
-          { href: '/flashcards', label: 'Flashcards', icon: '🃏', color: 'bg-amber-50' },
-        ].map((s) => (
-          <Link
-            key={s.href}
-            href={s.href}
-            className={`${s.color} rounded-xl p-4 text-center hover:scale-105 transition-transform`}
-          >
-            <div className="text-2xl mb-1">{s.icon}</div>
-            <div className="text-sm font-medium">{s.label}</div>
-          </Link>
-        ))}
+      {/* ── SHORTCUTS ── */}
+      <div>
+        <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4">Accès rapide</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          {SHORTCUTS.map((s) => (
+            <Link
+              key={s.href}
+              href={s.href}
+              className={`${s.bg} rounded-2xl p-5 flex flex-col items-center gap-3 hover:scale-105 transition-all duration-200 border border-white shadow-sm group`}
+            >
+              <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${s.gradient} flex items-center justify-center text-2xl shadow-md`}>
+                {s.icon}
+              </div>
+              <span className={`text-sm font-bold ${s.text}`}>{s.label}</span>
+            </Link>
+          ))}
+        </div>
       </div>
 
+      {/* ── MAIN GRID ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
         {/* Progression */}
-        <div className="bg-white rounded-xl border p-5">
-          <h2 className="font-semibold mb-4">Ma progression</h2>
+        <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm">
+          <div className="flex items-center justify-between mb-5">
+            <h2 className="font-bold text-gray-900">Ma progression</h2>
+            <Link href="/progression" className="text-xs font-semibold text-blue-600 hover:text-blue-700">Voir tout →</Link>
+          </div>
           {progress && progress.length > 0 ? (
-            <div className="space-y-3">
+            <div className="space-y-4">
               {progress.map((p) => (
-                <div key={p.id} className="flex items-center justify-between">
-                  <span className="text-sm text-gray-700">{(p.subjects as { name: string } | null)?.name}</span>
-                  <div className="flex items-center gap-2">
-                    <div className="w-24 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-blue-500 rounded-full"
-                        style={{ width: `${Math.min(p.score_avg * 100, 100)}%` }}
-                      />
+                <div key={p.id}>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-sm font-medium text-gray-700">
+                      {(p.subjects as { name: string } | null)?.name}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-orange-500">{p.streak_days}🔥</span>
+                      <span className="text-xs text-gray-400">{Math.round((p.score_avg ?? 0) * 100)}%</span>
                     </div>
-                    <span className="text-xs text-gray-500">{p.streak_days}🔥</span>
+                  </div>
+                  <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-blue-500 to-blue-600 rounded-full transition-all"
+                      style={{ width: `${Math.min((p.score_avg ?? 0) * 100, 100)}%` }}
+                    />
                   </div>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="text-sm text-gray-400">Commence à réviser pour voir ta progression ici.</p>
+            <div className="text-center py-8">
+              <p className="text-4xl mb-3">📊</p>
+              <p className="text-sm text-gray-400">Commence à réviser pour voir<br />ta progression ici.</p>
+              <Link href="/cours" className="inline-block mt-4 text-sm font-semibold text-blue-600 hover:underline">
+                Parcourir les cours →
+              </Link>
+            </div>
           )}
         </div>
 
-        {/* Derniers cours */}
-        <div className="bg-white rounded-xl border p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold">Cours récents</h2>
-            <Link href="/cours" className="text-xs text-blue-600 hover:underline">Voir tout</Link>
+        {/* Cours récents */}
+        <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm">
+          <div className="flex items-center justify-between mb-5">
+            <h2 className="font-bold text-gray-900">Cours récents</h2>
+            <Link href="/cours" className="text-xs font-semibold text-blue-600 hover:text-blue-700">Voir tout →</Link>
           </div>
           <div className="space-y-2">
-            {recentDocs?.map((doc) => (
+            {recentDocs && recentDocs.length > 0 ? recentDocs.map((doc) => (
               <Link
                 key={doc.id}
                 href={`/cours/${doc.id}`}
-                className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50"
+                className="flex items-center gap-4 p-3 rounded-xl hover:bg-gray-50 transition-colors group"
               >
-                <span className="text-lg">{doc.type === 'examen' ? '📝' : '📖'}</span>
-                <div>
-                  <p className="text-sm font-medium line-clamp-1">{doc.title}</p>
-                  <p className="text-xs text-gray-400 uppercase">{doc.level.replace('_', ' ')}</p>
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg flex-shrink-0 ${
+                  doc.type === 'examen' ? 'bg-violet-100' : 'bg-blue-100'
+                }`}>
+                  {doc.type === 'examen' ? '📝' : '📖'}
                 </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-gray-900 line-clamp-1 group-hover:text-blue-600 transition-colors">
+                    {doc.title}
+                  </p>
+                  <p className="text-xs text-gray-400 uppercase tracking-wide mt-0.5">
+                    {doc.level.replace('_', ' ')}
+                  </p>
+                </div>
+                <span className="text-gray-300 ml-auto group-hover:text-blue-400 transition-colors">→</span>
               </Link>
-            ))}
+            )) : (
+              <div className="text-center py-8">
+                <p className="text-4xl mb-3">📭</p>
+                <p className="text-sm text-gray-400">Aucun document disponible.</p>
+              </div>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Banner premium */}
-      {profile?.plan === 'free' && (
-        <div className="mt-6 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl p-5 text-white flex items-center justify-between">
-          <div>
-            <p className="font-semibold">Passe à Premium ⭐</p>
-            <p className="text-sm text-blue-100 mt-0.5">Questions IA illimitées · Tous les examens · Mode hors-ligne</p>
-          </div>
-          <Link
-            href="/billing"
-            className="bg-white text-blue-700 font-semibold text-sm px-4 py-2 rounded-lg hover:bg-blue-50 whitespace-nowrap"
-          >
-            2 000 FCFA/mois
+      {/* ── TIPS CARD ── */}
+      <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-100 rounded-2xl p-6 flex items-start gap-4">
+        <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center text-xl flex-shrink-0">💡</div>
+        <div>
+          <p className="font-bold text-emerald-900 mb-1">Conseil du jour</p>
+          <p className="text-sm text-emerald-700 leading-relaxed">
+            Pose tes questions à <strong>Kelassi IA</strong> en disant "explique-moi comme si j'avais 10 ans" pour des explications ultra-claires. La méthode Feynman est la plus efficace pour mémoriser.
+          </p>
+          <Link href="/tuteur" className="inline-flex items-center gap-1 mt-3 text-sm font-bold text-emerald-700 hover:text-emerald-900">
+            Essayer maintenant →
           </Link>
         </div>
-      )}
+      </div>
+
     </div>
   )
 }

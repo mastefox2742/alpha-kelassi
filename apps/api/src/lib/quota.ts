@@ -1,6 +1,6 @@
 import { redis } from './redis.js'
 
-const FREE_DAILY_LIMIT = 10
+const FREE_DAILY_LIMIT = 5
 const PREMIUM_DAILY_LIMIT = 200
 
 function quotaKey(userId: string): string {

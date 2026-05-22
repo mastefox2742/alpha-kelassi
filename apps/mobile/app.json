@@ -17,12 +17,9 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.kelassi.app",
       "buildNumber": "1",
-      "privacyManifests": {
-        "NSPrivacyTracking": false
-      },
       "infoPlist": {
-        "NSCameraUsageDescription": "Utilisé pour scanner des documents de cours",
-        "NSMicrophoneUsageDescription": "Utilisé pour les questions vocales à Kelassi",
+        "NSCameraUsageDescription": "UtilisÃ© pour scanner des documents de cours",
+        "NSMicrophoneUsageDescription": "UtilisÃ© pour les questions vocales Ã  Kelassi",
         "ITSAppUsesNonExemptEncryption": false
       }
     },
@@ -33,10 +30,14 @@
       },
       "package": "com.kelassi.app",
       "versionCode": 1,
-      "compileSdkVersion": 34,
-      "targetSdkVersion": 34,
-      "minSdkVersion": 23,
-      "permissions": ["INTERNET", "READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE"]
+      "compileSdkVersion": 35,
+      "targetSdkVersion": 35,
+      "minSdkVersion": 24,
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+      ]
     },
     "plugins": [
       "expo-router",
@@ -44,19 +45,19 @@
       [
         "expo-file-system",
         {}
-      ],
-      [
-        "@nozbe/watermelondb/native/ios",
-        {}
       ]
     ],
     "experiments": {
       "typedRoutes": true
     },
     "extra": {
+      "router": {
+        "origin": false
+      },
       "eas": {
-        "projectId": "kelassi-mobile"
+        "projectId": "ad3730f4-1cad-4acb-b4b9-f1f7bf722fcc"
       }
-    }
+    },
+    "owner": "m.mboniobambi"
   }
 }

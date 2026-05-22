@@ -17,7 +17,15 @@ export async function searchRelevantChunks(
 ): Promise<ChunkResult[]> {
   const { matchCount = 5, minSimilarity = 0.72, documentId } = options
 
-  const embedding = await embedQuery(question)
+  let embedding: number[]
+  try {
+    embedding = await embedQuery(question)
+  } catch (err) {
+    // Si les embeddings ne sont pas disponibles (pas de cours indexés ou modèle indisponible),
+    // retourner un tableau vide — Kelassi répondra sans contexte de cours
+    console.warn('[vector-search] Embeddings unavailable, skipping RAG:', (err as Error).message)
+    return []
+  }
 
   const { data, error } = await supabase.rpc('search_chunks', {
     query_embedding: embedding,
@@ -26,6 +34,9 @@ export async function searchRelevantChunks(
     filter_document: documentId ?? null,
   })
 
-  if (error) throw new Error(`Vector search error: ${error.message}`)
+  if (error) {
+    console.warn('[vector-search] RPC error:', error.message)
+    return []
+  }
   return (data ?? []) as ChunkResult[]
 }

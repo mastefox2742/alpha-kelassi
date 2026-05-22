@@ -42,7 +42,8 @@ export function BetaFeedbackButton() {
       {/* Bouton flottant */}
       <button
         onClick={() => setOpen(true)}
-        className="fixed bottom-6 right-6 z-50 flex items-center gap-2 bg-blue-600 text-white px-4 py-2.5 rounded-full shadow-lg hover:bg-blue-700 transition-all text-sm font-medium"
+        className="fixed bottom-24 right-6 z-50 md:bottom-6 flex items-center gap-2 bg-blue-600 text-white px-4 py-2.5 rounded-full shadow-lg hover:bg-blue-700 transition-all text-sm font-medium"
+        suppressHydrationWarning
         title="Donner un avis"
       >
         💬 Feedback

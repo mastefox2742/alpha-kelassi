@@ -1,12 +1,13 @@
-import { Hono } from 'hono'
-import { supabase } from '../lib/supabase.js'
+﻿import { Hono } from 'hono'
+import type { AppVariables } from '../lib/types.js'
+
 import { authMiddleware } from '../middleware/auth.js'
 import { computeLevel, BADGES } from '../lib/xp.js'
 
-const router = new Hono()
+const router = new Hono<{ Variables: AppVariables }>()
 router.use('*', authMiddleware)
 
-// GET /api/progress/dashboard — toutes les données de progression élève
+// GET /api/progress/dashboard â€” toutes les donnÃ©es de progression Ã©lÃ¨ve
 router.get('/dashboard', async (c) => {
   const userId = c.get('userId') as string
 
@@ -18,30 +19,26 @@ router.get('/dashboard', async (c) => {
     { count: questionsCount },
     { count: viewsCount },
   ] = await Promise.all([
-    supabase.from('users').select('xp, full_name, plan').eq('id', userId).single(),
-    supabase.from('user_badges').select('badge_code, earned_at').eq('user_id', userId).order('earned_at'),
-    supabase
-      .from('user_progress')
+    c.get('supabase').from('users').select('xp, full_name, plan').eq('id', userId).single(),
+    c.get('supabase').from('user_badges').select('badge_code, earned_at').eq('user_id', userId).order('earned_at'),
+    c.get('supabase').from('user_progress')
       .select('subject_id, flashcards_reviewed, score_avg, streak_days, last_active, subjects(name, level)')
       .eq('user_id', userId),
-    supabase
-      .from('flashcards')
+    c.get('supabase').from('flashcards')
       .select('id, front, next_review, documents(title)')
       .eq('user_id', userId)
       .lte('next_review', new Date().toISOString())
       .order('next_review', { ascending: true })
       .limit(1)
       .single(),
-    supabase
-      .from('chat_messages')
+    c.get('supabase').from('chat_messages')
       .select('id', { count: 'exact', head: true })
       .eq('role', 'user')
       .in(
         'session_id',
-        (await supabase.from('chat_sessions').select('id').eq('user_id', userId)).data?.map((s) => s.id) ?? []
+        (await c.get('supabase').from('chat_sessions').select('id').eq('user_id', userId)).data?.map((s) => s.id) ?? []
       ),
-    supabase
-      .from('document_views')
+    c.get('supabase').from('document_views')
       .select('id', { count: 'exact', head: true })
       .eq('user_id', userId),
   ])
@@ -76,3 +73,5 @@ router.get('/dashboard', async (c) => {
 })
 
 export { router as progressRouter }
+
+

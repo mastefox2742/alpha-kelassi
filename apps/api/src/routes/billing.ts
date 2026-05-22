@@ -1,16 +1,17 @@
-import { Hono } from 'hono'
+﻿import { Hono } from 'hono'
+import type { AppVariables } from '../lib/types.js'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import Stripe from 'stripe'
-import { supabase } from '../lib/supabase.js'
+
 import { authMiddleware } from '../middleware/auth.js'
 
-const router = new Hono()
+const router = new Hono<{ Variables: AppVariables }>()
 const stripe = new Stripe(process.env['STRIPE_SECRET_KEY']!)
 
 router.use('*', authMiddleware)
 
-// POST /api/billing/checkout — crée une session Stripe Checkout
+// POST /api/billing/checkout â€” crÃ©e une session Stripe Checkout
 router.post(
   '/checkout',
   zValidator('json', z.object({ plan: z.enum(['monthly', 'yearly']) })),
@@ -23,9 +24,8 @@ router.post(
         ? process.env['STRIPE_PRICE_PREMIUM_MONTHLY']!
         : process.env['STRIPE_PRICE_PREMIUM_YEARLY']!
 
-    // Récupère ou crée le customer Stripe
-    const { data: user } = await supabase
-      .from('users')
+    // RÃ©cupÃ¨re ou crÃ©e le customer Stripe
+    const { data: user } = await c.get('supabase').from('users')
       .select('email')
       .eq('id', userId)
       .single()
@@ -45,7 +45,7 @@ router.post(
   }
 )
 
-// POST /api/billing/cinetpay — initie un paiement CinetPay Mobile Money
+// POST /api/billing/cinetpay â€” initie un paiement CinetPay Mobile Money
 router.post(
   '/cinetpay',
   zValidator('json', z.object({ plan: z.enum(['monthly', 'yearly']), phone: z.string() })),
@@ -66,7 +66,7 @@ router.post(
         transaction_id: transactionId,
         amount,
         currency: 'XAF',
-        description: `Kelassi Premium — ${plan === 'monthly' ? 'Mensuel' : 'Annuel'}`,
+        description: `Kelassi Premium â€” ${plan === 'monthly' ? 'Mensuel' : 'Annuel'}`,
         customer_phone_number: phone,
         notify_url: process.env['CINETPAY_NOTIFY_URL'],
         return_url: `${process.env['NEXT_PUBLIC_SITE_URL']}/billing?success=true`,
@@ -84,12 +84,11 @@ router.post(
   }
 )
 
-// GET /api/billing/subscription — statut abonnement courant
+// GET /api/billing/subscription â€” statut abonnement courant
 router.get('/subscription', async (c) => {
   const userId = c.get('userId') as string
 
-  const { data } = await supabase
-    .from('subscriptions')
+  const { data } = await c.get('supabase').from('subscriptions')
     .select('*')
     .eq('user_id', userId)
     .eq('status', 'active')
@@ -100,12 +99,11 @@ router.get('/subscription', async (c) => {
   return c.json({ data })
 })
 
-// POST /api/billing/cancel — annule l'abonnement Stripe
+// POST /api/billing/cancel â€” annule l'abonnement Stripe
 router.post('/cancel', async (c) => {
   const userId = c.get('userId') as string
 
-  const { data: sub } = await supabase
-    .from('subscriptions')
+  const { data: sub } = await c.get('supabase').from('subscriptions')
     .select('stripe_sub_id')
     .eq('user_id', userId)
     .eq('status', 'active')
@@ -121,3 +119,5 @@ router.post('/cancel', async (c) => {
 })
 
 export { router as billingRouter }
+
+

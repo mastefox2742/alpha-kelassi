@@ -1,3 +1,4 @@
+import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
@@ -15,13 +16,18 @@ import { adminAnalyticsRouter } from './routes/admin/analytics.js'
 import { accountRouter } from './routes/account.js'
 import { onboardingRouter } from './routes/onboarding.js'
 import { feedbackRouter } from './routes/feedback.js'
+import { adminNotificationsRouter } from './routes/admin/notifications.js'
+import { notificationsRouter } from './routes/notifications.js'
 import { startEmbedWorker } from './jobs/embed-worker.js'
 import { initSentry } from './lib/monitoring.js'
 import { metricsMiddleware, getMetrics } from './middleware/metrics.js'
 import { chatRateLimit } from './middleware/rate-limit.js'
 
-// Démarre le worker BullMQ en arrière-plan
-startEmbedWorker()
+// Démarre le worker BullMQ uniquement si Redis est configuré
+const queueRedisUrl = process.env['QUEUE_REDIS_URL']
+if (queueRedisUrl && !queueRedisUrl.includes('xxxx')) {
+  startEmbedWorker()
+}
 initSentry().catch(() => null)
 
 const app = new Hono()
@@ -58,10 +64,12 @@ app.route('/api/admin/analytics', adminAnalyticsRouter)
 app.route('/api/account', accountRouter)
 app.route('/api/onboarding', onboardingRouter)
 app.route('/api/feedback', feedbackRouter)
+app.route('/api/admin/notifications', adminNotificationsRouter)
+app.route('/api/notifications', notificationsRouter)
 app.use('/api/ai/chat', chatRateLimit)
 app.route('/webhooks', webhooksRouter)
 
-export default {
-  port: parseInt(process.env['PORT'] ?? '3001'),
-  fetch: app.fetch,
-}
+const port = parseInt(process.env['PORT'] ?? '3001')
+serve({ fetch: app.fetch, port }, () => {
+  console.log(`🚀 Kelassi API démarrée sur http://localhost:${port}`)
+})

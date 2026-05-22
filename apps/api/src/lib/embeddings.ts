@@ -1,9 +1,9 @@
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import { GoogleGenAI } from '@google/genai'
 
-const genai = new GoogleGenerativeAI(process.env['GEMINI_API_KEY']!)
-const model = genai.getGenerativeModel({ model: 'text-embedding-004' })
+const genai = new GoogleGenAI({ apiKey: process.env['GEMINI_API_KEY']! })
 
 const BATCH_SIZE = 100
+const EMBED_MODEL = 'gemini-embedding-2'
 
 export async function embedTexts(texts: string[]): Promise<number[][]> {
   const embeddings: number[][] = []
@@ -12,14 +12,16 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
     const batch = texts.slice(i, i + BATCH_SIZE)
     const results = await Promise.all(
       batch.map((text) =>
-        model.embedContent({
-          content: { parts: [{ text }], role: 'user' },
-          taskType: 'RETRIEVAL_DOCUMENT' as any,
+        genai.models.embedContent({
+          model: EMBED_MODEL,
+          contents: text,
+          config: { taskType: 'RETRIEVAL_DOCUMENT' },
         })
       )
     )
     for (const result of results) {
-      embeddings.push(result.embedding.values)
+      const values = result.embeddings?.[0]?.values ?? []
+      embeddings.push(values)
     }
   }
 
@@ -27,9 +29,10 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
 }
 
 export async function embedQuery(text: string): Promise<number[]> {
-  const result = await model.embedContent({
-    content: { parts: [{ text }], role: 'user' },
-    taskType: 'RETRIEVAL_QUERY' as any,
+  const result = await genai.models.embedContent({
+    model: EMBED_MODEL,
+    contents: text,
+    config: { taskType: 'RETRIEVAL_QUERY' },
   })
-  return result.embedding.values
+  return result.embeddings?.[0]?.values ?? []
 }

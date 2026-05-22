@@ -33,7 +33,7 @@ export function UploadForm({ subjects, onSuccess }: Props) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!file) return setError('Sélectionnez un fichier PDF')
+    if (!file) return setError('Sélectionnez un fichier (PDF, DOCX ou TXT)')
     if (!form.subject_id) return setError('Sélectionnez une matière')
 
     setLoading(true)
@@ -174,16 +174,25 @@ export function UploadForm({ subjects, onSuccess }: Props) {
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Fichier PDF</label>
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Fichier <span className="text-gray-400 font-normal">(PDF, DOCX ou TXT)</span>
+        </label>
         <input
           ref={fileRef}
           type="file"
-          accept="application/pdf"
+          accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,text/plain,.txt"
           onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           required
           className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
         />
-        {file && <p className="text-xs text-gray-500 mt-1">{file.name} — {(file.size / 1024 / 1024).toFixed(2)} Mo</p>}
+        {file && (
+          <p className="text-xs text-gray-500 mt-1">
+            {file.name} — {(file.size / 1024 / 1024).toFixed(2)} Mo
+          </p>
+        )}
+        <p className="text-xs text-gray-400 mt-1">
+          Le texte est extrait automatiquement et présenté de façon formatée aux élèves.
+        </p>
       </div>
 
       <button

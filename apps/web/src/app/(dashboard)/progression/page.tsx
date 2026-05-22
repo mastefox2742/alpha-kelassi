@@ -4,8 +4,6 @@ import Link from 'next/link'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
-const LEVEL_COLORS = ['', 'bg-gray-200', 'bg-blue-200', 'bg-purple-200', 'bg-orange-200', 'bg-yellow-300']
-
 interface DashboardData {
   xp: number
   level: number
@@ -25,98 +23,155 @@ interface DashboardData {
   stats: { questions_asked: number; documents_viewed: number; flashcards_reviewed: number }
 }
 
+function levelFloor(level: number): number {
+  return [0, 0, 100, 300, 600, 1000][level] ?? 0
+}
+
+const LEVEL_GRADIENTS = ['', 'from-gray-400 to-gray-500', 'from-blue-500 to-blue-600', 'from-purple-500 to-purple-600', 'from-orange-500 to-orange-600', 'from-yellow-400 to-yellow-500']
+
 export default async function ProgressionPage() {
   const supabase = await createClient()
   const { data: { session } } = await supabase.auth.getSession()
   if (!session) redirect('/login')
 
-  const res = await fetch(`${API_URL}/api/progress/dashboard`, {
-    headers: { Authorization: `Bearer ${session.access_token}` },
-    cache: 'no-store',
-  })
-  const json = await res.json()
-  const d: DashboardData = json.data
+  let d: DashboardData | null = null
+  try {
+    const res = await fetch(`${API_URL}/api/progress/dashboard`, {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+      cache: 'no-store',
+    })
+    const json = await res.json()
+    d = json.data
+  } catch {}
+
+  if (!d) {
+    return (
+      <div className="max-w-4xl mx-auto px-6 py-8">
+        <h1 className="text-3xl font-black text-gray-900 mb-2">Ma progression</h1>
+        <div className="bg-amber-50 border border-amber-100 rounded-2xl p-6 text-center">
+          <p className="text-amber-700">Commence à réviser pour voir ta progression ici !</p>
+          <Link href="/cours" className="inline-block mt-4 text-sm font-semibold text-amber-700 hover:underline">
+            Parcourir les cours →
+          </Link>
+        </div>
+      </div>
+    )
+  }
 
   const xpInLevel = d.next_level_xp === Infinity
     ? 100
     : Math.round(((d.xp - levelFloor(d.level)) / (d.next_level_xp - levelFloor(d.level))) * 100)
 
+  const gradient = LEVEL_GRADIENTS[d.level] ?? 'from-purple-500 to-purple-600'
+
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
+    <div className="max-w-4xl mx-auto px-6 py-8 space-y-6">
+
+      {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold">Ma progression</h1>
-        <p className="text-sm text-gray-400 mt-0.5">Tes stats, badges et objectifs du jour</p>
+        <h1 className="text-3xl font-black text-gray-900">Ma progression</h1>
+        <p className="text-gray-500 mt-1">Stats, badges et objectifs</p>
       </div>
 
-      {/* XP + Niveau + Streak */}
+      {/* XP + Streak hero */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {/* Niveau */}
-        <div className="sm:col-span-2 bg-white rounded-2xl border p-5">
-          <div className="flex items-center justify-between mb-3">
+        {/* XP card */}
+        <div className="sm:col-span-2 bg-white rounded-2xl border border-gray-100 p-6 shadow-sm">
+          <div className="flex items-start justify-between mb-4">
             <div>
-              <p className="text-xs text-gray-400 uppercase tracking-wide font-medium">Niveau {d.level}</p>
-              <p className="text-lg font-bold">{d.level_label}</p>
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Niveau {d.level}</p>
+              <p className="text-xl font-black text-gray-900">{d.level_label}</p>
             </div>
-            <div className="text-right">
-              <p className="text-2xl font-extrabold text-purple-600">{d.xp} XP</p>
-              {d.next_level_xp !== Infinity && (
-                <p className="text-xs text-gray-400">prochain : {d.next_level_xp} XP</p>
-              )}
+            <div className={`bg-gradient-to-br ${gradient} text-white rounded-2xl px-4 py-2 text-right shadow-md`}>
+              <p className="text-2xl font-black">{d.xp}</p>
+              <p className="text-xs opacity-80">XP</p>
             </div>
           </div>
-          <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
+          <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden mb-2">
             <div
-              className={`h-3 rounded-full transition-all ${LEVEL_COLORS[d.level] || 'bg-purple-500'}`}
+              className={`h-3 rounded-full bg-gradient-to-r ${gradient} transition-all duration-700`}
               style={{ width: `${Math.min(xpInLevel, 100)}%` }}
             />
           </div>
-          {d.next_level_xp !== Infinity && (
-            <p className="text-xs text-gray-400 mt-1">{xpInLevel}% vers le niveau {d.level + 1}</p>
-          )}
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-gray-400">{xpInLevel}% vers le niveau {d.level + 1}</p>
+            {d.next_level_xp !== Infinity && (
+              <p className="text-xs text-gray-400">{d.next_level_xp - d.xp} XP restants</p>
+            )}
+          </div>
         </div>
 
         {/* Streak */}
-        <div className="bg-white rounded-2xl border p-5 flex flex-col items-center justify-center text-center">
-          <p className="text-4xl mb-1">{d.streak >= 7 ? '🔥' : d.streak >= 3 ? '⚡' : '📅'}</p>
-          <p className="text-3xl font-extrabold">{d.streak}</p>
-          <p className="text-sm text-gray-500">jour{d.streak > 1 ? 's' : ''} consécutif{d.streak > 1 ? 's' : ''}</p>
-          {d.streak === 0 && (
-            <p className="text-xs text-gray-400 mt-1">Révise aujourd'hui !</p>
-          )}
+        <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm flex flex-col items-center justify-center text-center">
+          <div className="text-4xl mb-2">{d.streak >= 7 ? '🔥' : d.streak >= 3 ? '⚡' : '📅'}</div>
+          <p className="text-4xl font-black text-gray-900">{d.streak}</p>
+          <p className="text-sm text-gray-500 mt-1">jour{d.streak > 1 ? 's' : ''} de suite</p>
+          {d.streak === 0 && <p className="text-xs text-blue-600 font-semibold mt-2">Révise aujourd'hui !</p>}
+          {d.streak >= 7 && <p className="text-xs text-orange-600 font-semibold mt-2">Serie en feu 🔥</p>}
         </div>
       </div>
 
       {/* Stats globales */}
       <div className="grid grid-cols-3 gap-4">
         {[
-          { label: 'Documents vus', value: d.stats.documents_viewed, icon: '📄' },
-          { label: 'Questions à Kelassi', value: d.stats.questions_asked, icon: '🤖' },
-          { label: 'Flashcards révisées', value: d.stats.flashcards_reviewed, icon: '🃏' },
+          { label: 'Documents vus', value: d.stats.documents_viewed, icon: '📄', color: 'bg-blue-50 text-blue-600' },
+          { label: 'Questions IA', value: d.stats.questions_asked, icon: '🤖', color: 'bg-emerald-50 text-emerald-600' },
+          { label: 'Flashcards', value: d.stats.flashcards_reviewed, icon: '🃏', color: 'bg-violet-50 text-violet-600' },
         ].map((s) => (
-          <div key={s.label} className="bg-white rounded-2xl border p-4 text-center">
-            <p className="text-2xl mb-1">{s.icon}</p>
-            <p className="text-xl font-bold">{s.value}</p>
-            <p className="text-xs text-gray-500 mt-0.5">{s.label}</p>
+          <div key={s.label} className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm text-center">
+            <div className={`w-10 h-10 ${s.color} rounded-xl flex items-center justify-center text-xl mx-auto mb-2`}>
+              {s.icon}
+            </div>
+            <p className="text-2xl font-black text-gray-900">{s.value}</p>
+            <p className="text-xs text-gray-500 mt-0.5 leading-tight">{s.label}</p>
           </div>
         ))}
       </div>
 
+      {/* Flashcard à réviser */}
+      {d.next_review && (
+        <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-100 rounded-2xl p-5 flex items-center gap-4">
+          <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center text-2xl flex-shrink-0">⏰</div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-bold text-amber-800">Flashcard à réviser maintenant</p>
+            <p className="text-sm text-amber-700 truncate mt-0.5">{d.next_review.front}</p>
+            {d.next_review.documents && (
+              <p className="text-xs text-amber-500 mt-0.5">{d.next_review.documents.title}</p>
+            )}
+          </div>
+          <Link
+            href="/flashcards"
+            className="flex-shrink-0 px-4 py-2 bg-amber-500 text-white rounded-xl text-sm font-bold hover:bg-amber-600 transition-colors shadow-sm"
+          >
+            Réviser →
+          </Link>
+        </div>
+      )}
+
       {/* Badges */}
-      <div>
-        <h2 className="text-base font-semibold mb-3">Badges obtenus</h2>
+      <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-black text-gray-900">Badges obtenus</h2>
+          <span className="text-xs font-bold text-gray-400 bg-gray-100 px-2.5 py-1 rounded-full">
+            {d.badges.length} badge{d.badges.length !== 1 ? 's' : ''}
+          </span>
+        </div>
         {d.badges.length === 0 ? (
-          <p className="text-sm text-gray-400">Aucun badge encore — continue à réviser !</p>
+          <div className="text-center py-6">
+            <p className="text-3xl mb-3">🏆</p>
+            <p className="text-sm text-gray-500">Aucun badge encore — continue à réviser !</p>
+          </div>
         ) : (
           <div className="flex flex-wrap gap-3">
             {d.badges.map((b) => (
               <div
                 key={b.code}
-                className="flex items-center gap-2 bg-white border rounded-xl px-4 py-2.5 shadow-sm"
+                className="flex items-center gap-2.5 bg-gray-50 border border-gray-100 rounded-xl px-4 py-2.5 hover:bg-gray-100 transition-colors"
                 title={b.description}
               >
-                <span className="text-xl">{b.icon}</span>
+                <span className="text-2xl">{b.icon}</span>
                 <div>
-                  <p className="text-sm font-medium">{b.label}</p>
+                  <p className="text-sm font-bold text-gray-900">{b.label}</p>
                   <p className="text-xs text-gray-400">
                     {new Date(b.earned_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
                   </p>
@@ -127,56 +182,33 @@ export default async function ProgressionPage() {
         )}
       </div>
 
-      {/* Prochaine révision SM-2 */}
-      {d.next_review && (
-        <div className="bg-amber-50 border border-amber-100 rounded-2xl p-5 flex items-center gap-4">
-          <span className="text-3xl">⏰</span>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-amber-800">Flashcard à réviser maintenant</p>
-            <p className="text-sm text-amber-700 truncate mt-0.5">{d.next_review.front}</p>
-            {d.next_review.documents && (
-              <p className="text-xs text-amber-500 mt-0.5">{d.next_review.documents.title}</p>
-            )}
-          </div>
-          <Link
-            href="/flashcards"
-            className="flex-shrink-0 px-4 py-2 bg-amber-500 text-white rounded-xl text-sm font-medium hover:bg-amber-600"
-          >
-            Réviser →
-          </Link>
-        </div>
-      )}
-
       {/* Progression par matière */}
       {d.progress.length > 0 && (
-        <div>
-          <h2 className="text-base font-semibold mb-3">Par matière</h2>
-          <div className="space-y-3">
+        <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm">
+          <h2 className="font-black text-gray-900 mb-4">Par matière</h2>
+          <div className="space-y-4">
             {d.progress.map((p) => (
-              <div key={p.subject_id} className="bg-white rounded-xl border p-4">
+              <div key={p.subject_id}>
                 <div className="flex items-center justify-between mb-2">
                   <div>
-                    <p className="text-sm font-medium">{p.subjects?.name ?? '—'}</p>
-                    <p className="text-xs text-gray-400 uppercase">{p.subjects?.level?.replace('_', ' ')}</p>
+                    <p className="text-sm font-bold text-gray-900">{p.subjects?.name ?? '—'}</p>
+                    <p className="text-xs text-gray-400 uppercase font-medium">{p.subjects?.level?.replace('_', ' ')}</p>
                   </div>
-                  <div className="flex items-center gap-3 text-right">
-                    <div>
+                  <div className="flex items-center gap-4 text-right">
+                    <div className="hidden sm:block">
                       <p className="text-xs text-gray-400">Flashcards</p>
-                      <p className="text-sm font-semibold">{p.flashcards_reviewed}</p>
+                      <p className="text-sm font-bold text-gray-900">{p.flashcards_reviewed}</p>
                     </div>
                     <div>
-                      <p className="text-xs text-gray-400">Score moy.</p>
-                      <p className="text-sm font-semibold">{Math.round(p.score_avg * 100)}%</p>
+                      <p className="text-xs text-gray-400">Score</p>
+                      <p className="text-sm font-black text-gray-900">{Math.round(p.score_avg * 100)}%</p>
                     </div>
-                    <div>
-                      <p className="text-xs text-gray-400">Streak</p>
-                      <p className="text-sm font-semibold">🔥 {p.streak_days}j</p>
-                    </div>
+                    <div className="text-orange-500 font-bold text-sm">🔥 {p.streak_days}j</div>
                   </div>
                 </div>
                 <div className="w-full bg-gray-100 rounded-full h-2">
                   <div
-                    className="bg-purple-500 h-2 rounded-full"
+                    className="bg-gradient-to-r from-blue-500 to-violet-500 h-2 rounded-full transition-all"
                     style={{ width: `${Math.min(Math.round(p.score_avg * 100), 100)}%` }}
                   />
                 </div>
@@ -187,8 +219,4 @@ export default async function ProgressionPage() {
       )}
     </div>
   )
-}
-
-function levelFloor(level: number): number {
-  return [0, 0, 100, 300, 600, 1000][level] ?? 0
 }

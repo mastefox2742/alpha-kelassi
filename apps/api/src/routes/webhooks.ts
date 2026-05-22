@@ -1,7 +1,7 @@
-import { Hono } from 'hono'
+﻿import { Hono } from 'hono'
 import Stripe from 'stripe'
 import { createHash } from 'crypto'
-import { supabase } from '../lib/supabase.js'
+import { supabaseAdmin as supabase } from '../lib/supabase.js'
 
 const router = new Hono()
 const stripe = new Stripe(process.env['STRIPE_SECRET_KEY']!)
@@ -77,7 +77,7 @@ router.post('/cinetpay', async (c) => {
     signature: string
   }>()
 
-  // Vérification HMAC CinetPay — prévient les faux paiements
+  // VÃ©rification HMAC CinetPay â€” prÃ©vient les faux paiements
   const apiKey = process.env['CINETPAY_API_KEY']!
   const expectedSig = createHash('sha256')
     .update(
@@ -118,3 +118,4 @@ router.post('/cinetpay', async (c) => {
 })
 
 export { router as webhooksRouter }
+

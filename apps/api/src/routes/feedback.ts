@@ -1,10 +1,11 @@
-import { Hono } from 'hono'
+﻿import { Hono } from 'hono'
+import type { AppVariables } from '../lib/types.js'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
-import { supabase } from '../lib/supabase.js'
+
 import { authMiddleware } from '../middleware/auth.js'
 
-const router = new Hono()
+const router = new Hono<{ Variables: AppVariables }>()
 router.use('*', authMiddleware)
 
 // POST /api/feedback
@@ -20,7 +21,7 @@ router.post(
     const userId = c.get('userId') as string
     const body = c.req.valid('json')
 
-    const { error } = await supabase.from('beta_feedback').insert({
+    const { error } = await c.get('supabase').from('beta_feedback').insert({
       user_id:     userId,
       rating:      body.rating,
       comment:     body.comment ?? null,
@@ -33,14 +34,13 @@ router.post(
   }
 )
 
-// GET /api/feedback — admin seulement
+// GET /api/feedback â€” admin seulement
 router.get('/', async (c) => {
   const userId = c.get('userId') as string
-  const { data: user } = await supabase.from('users').select('role').eq('id', userId).single()
+  const { data: user } = await c.get('supabase').from('users').select('role').eq('id', userId).single()
   if (user?.role !== 'admin') return c.json({ error: { code: 'FORBIDDEN' } }, 403)
 
-  const { data } = await supabase
-    .from('beta_feedback')
+  const { data } = await c.get('supabase').from('beta_feedback')
     .select('id, rating, comment, page, app_version, created_at')
     .order('created_at', { ascending: false })
     .limit(200)
@@ -53,3 +53,5 @@ router.get('/', async (c) => {
 })
 
 export { router as feedbackRouter }
+
+

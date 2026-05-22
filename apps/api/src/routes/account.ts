@@ -1,11 +1,12 @@
-import { Hono } from 'hono'
-import { supabase } from '../lib/supabase.js'
+﻿import { Hono } from 'hono'
+import type { AppVariables } from '../lib/types.js'
+
 import { authMiddleware } from '../middleware/auth.js'
 
-const router = new Hono()
+const router = new Hono<{ Variables: AppVariables }>()
 router.use('*', authMiddleware)
 
-// GET /api/account/export — export RGPD de toutes les données personnelles
+// GET /api/account/export â€” export RGPD de toutes les donnÃ©es personnelles
 router.get('/export', async (c) => {
   const userId = c.get('userId') as string
 
@@ -17,12 +18,12 @@ router.get('/export', async (c) => {
     { data: sessions },
     { data: badges },
   ] = await Promise.all([
-    supabase.from('users').select('id, email, phone, full_name, plan, created_at').eq('id', userId).single(),
-    supabase.from('subscriptions').select('plan, status, expires_at, created_at').eq('user_id', userId),
-    supabase.from('user_progress').select('*, subjects(name, level)').eq('user_id', userId),
-    supabase.from('flashcards').select('front, back, interval, reps, next_review, created_at').eq('user_id', userId).limit(500),
-    supabase.from('chat_sessions').select('id, created_at, title').eq('user_id', userId).limit(100),
-    supabase.from('user_badges').select('badge_code, earned_at').eq('user_id', userId),
+    (c.get('supabase') ).from('users').select('id, email, phone, full_name, plan, created_at').eq('id', userId).single(),
+    (c.get('supabase') ).from('subscriptions').select('plan, status, expires_at, created_at').eq('user_id', userId),
+    (c.get('supabase') ).from('user_progress').select('*, subjects(name, level)').eq('user_id', userId),
+    (c.get('supabase') ).from('flashcards').select('front, back, interval, reps, next_review, created_at').eq('user_id', userId).limit(500),
+    (c.get('supabase') ).from('chat_sessions').select('id, created_at, title').eq('user_id', userId).limit(100),
+    (c.get('supabase') ).from('user_badges').select('badge_code, earned_at').eq('user_id', userId),
   ])
 
   const exportData = {
@@ -43,18 +44,20 @@ router.get('/export', async (c) => {
   })
 })
 
-// DELETE /api/account — suppression du compte (RGPD)
+// DELETE /api/account â€” suppression du compte (RGPD)
 router.delete('/', async (c) => {
   const userId = c.get('userId') as string
 
-  // La cascade PostgreSQL supprime automatiquement toutes les données liées
+  // La cascade PostgreSQL supprime automatiquement toutes les donnÃ©es liÃ©es
   // (subscriptions, progress, flashcards, chat_sessions, user_badges, document_views)
-  const { error } = await supabase.from('users').delete().eq('id', userId)
+  const { error } = await (c.get('supabase') ).from('users').delete().eq('id', userId)
   if (error) return c.json({ error: { code: 'DB_ERROR', message: error.message } }, 500)
 
-  // Supprime aussi l'utilisateur Supabase Auth (nécessite le service_role key côté admin)
-  // En attendant, l'entrée users est supprimée et la cascade désactive l'accès
+  // Supprime aussi l'utilisateur Supabase Auth (nÃ©cessite le service_role key cÃ´tÃ© admin)
+  // En attendant, l'entrÃ©e users est supprimÃ©e et la cascade dÃ©sactive l'accÃ¨s
   return c.json({ data: { deleted: true } })
 })
 
 export { router as accountRouter }
+
+

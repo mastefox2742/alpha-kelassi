@@ -1,12 +1,13 @@
-import { Worker, Job } from 'bullmq'
+﻿import { Worker, Job } from 'bullmq'
 import pdfParse from 'pdf-parse'
-import { supabase } from '../lib/supabase.js'
+import { supabaseAdmin as supabase } from '../lib/supabase.js'
 import { chunkText } from '../lib/chunker.js'
 import { embedTexts } from '../lib/embeddings.js'
 
 interface EmbedJobData {
   document_id: string
   pdf_url: string
+  text_content?: string  // pré-extrait à l'upload si disponible
 }
 
 const ALLOWED_PDF_HOSTS = [
@@ -18,30 +19,40 @@ function assertSafeStorageUrl(url: string): void {
   try { parsed = new URL(url) } catch { throw new Error('pdf_url invalide') }
   if (parsed.protocol !== 'https:') throw new Error('pdf_url doit utiliser HTTPS')
   if (!ALLOWED_PDF_HOSTS.some((h) => parsed.hostname === h || parsed.hostname.endsWith(`.${h}`))) {
-    throw new Error(`pdf_url pointe vers un hôte non autorisé : ${parsed.hostname}`)
+    throw new Error(`pdf_url pointe vers un hÃ´te non autorisÃ© : ${parsed.hostname}`)
   }
 }
 
 async function processEmbedJob(job: Job<EmbedJobData>) {
-  const { document_id, pdf_url } = job.data
+  const { document_id, pdf_url, text_content: preExtracted } = job.data
   await job.updateProgress(5)
 
-  // 1. Télécharge le PDF depuis Supabase Storage (URL validée contre SSRF)
-  assertSafeStorageUrl(pdf_url)
-  const response = await fetch(pdf_url)
-  if (!response.ok) throw new Error(`Impossible de télécharger le PDF : ${response.status}`)
-  const buffer = Buffer.from(await response.arrayBuffer())
-  await job.updateProgress(20)
+  let rawText: string
 
-  // 2. Extraction du texte brut
-  const parsed = await pdfParse(buffer)
-  const rawText = parsed.text
-  if (!rawText || rawText.trim().length < 50) {
-    throw new Error('PDF vide ou non-extractible (probablement scanné)')
+  if (preExtracted && preExtracted.trim().length >= 50) {
+    // Texte déjà extrait à l'upload (DOCX, TXT, ou PDF) — évite un re-téléchargement
+    rawText = preExtracted
+    await job.updateProgress(35)
+  } else {
+    // Fallback : re-télécharge et extrait depuis le PDF
+    assertSafeStorageUrl(pdf_url)
+    const response = await fetch(pdf_url)
+    if (!response.ok) throw new Error(`Impossible de télécharger le PDF : ${response.status}`)
+    const buffer = Buffer.from(await response.arrayBuffer())
+    await job.updateProgress(20)
+
+    const parsed = await pdfParse(buffer)
+    rawText = parsed.text
+    if (!rawText || rawText.trim().length < 50) {
+      throw new Error('PDF vide ou non-extractible (probablement scanné)')
+    }
+
+    // Sauvegarde text_content si ce n'était pas encore fait
+    await supabase.from('documents').update({ text_content: rawText }).eq('id', document_id)
+    await job.updateProgress(35)
   }
-  await job.updateProgress(35)
 
-  // 3. Chunking sémantique
+  // 3. Chunking sÃ©mantique
   const chunks = chunkText(rawText)
   if (chunks.length === 0) throw new Error('Aucun chunk produit')
   await job.updateProgress(50)
@@ -64,7 +75,7 @@ async function processEmbedJob(job: Job<EmbedJobData>) {
     metadata: { is_exercise: chunk.isExercise, char_count: chunk.content.length },
   }))
 
-  // Insère en batches de 50 pour éviter les timeouts Supabase
+  // InsÃ¨re en batches de 50 pour Ã©viter les timeouts Supabase
   for (let i = 0; i < rows.length; i += 50) {
     const batch = rows.slice(i, i + 50)
     const { error } = await supabase.from('document_chunks').insert(batch)
@@ -72,14 +83,14 @@ async function processEmbedJob(job: Job<EmbedJobData>) {
   }
   await job.updateProgress(95)
 
-  // 6. Marque le document comme indexé
+  // 6. Marque le document comme indexÃ©
   await supabase
     .from('documents')
     .update({ indexed_at: new Date().toISOString() })
     .eq('id', document_id)
 
   await job.updateProgress(100)
-  console.log(`[embed-worker] Document ${document_id} indexé — ${chunks.length} chunks`)
+  console.log(`[embed-worker] Document ${document_id} indexÃ© â€” ${chunks.length} chunks`)
   return { document_id, chunks_count: chunks.length }
 }
 
@@ -90,16 +101,17 @@ export function startEmbedWorker() {
   })
 
   worker.on('completed', (job) => {
-    console.log(`[embed-worker] Job ${job.id} terminé`)
+    console.log(`[embed-worker] Job ${job.id} terminÃ©`)
   })
 
   worker.on('failed', (job, err) => {
-    console.error(`[embed-worker] Job ${job?.id} échoué:`, err.message)
+    console.error(`[embed-worker] Job ${job?.id} Ã©chouÃ©:`, err.message)
   })
 
   worker.on('progress', (job, progress) => {
-    console.log(`[embed-worker] Job ${job.id} — ${progress}%`)
+    console.log(`[embed-worker] Job ${job.id} â€” ${progress}%`)
   })
 
   return worker
 }
+

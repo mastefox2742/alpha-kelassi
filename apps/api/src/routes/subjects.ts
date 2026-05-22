@@ -1,11 +1,12 @@
-import { Hono } from 'hono'
+﻿import { Hono } from 'hono'
+import type { AppVariables } from '../lib/types.js'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
-import { supabase } from '../lib/supabase.js'
+
 import { redis } from '../lib/redis.js'
 import { authMiddleware } from '../middleware/auth.js'
 
-const router = new Hono()
+const router = new Hono<{ Variables: AppVariables }>()
 
 router.use('*', authMiddleware)
 
@@ -20,7 +21,7 @@ router.get('/', zValidator('query', z.object({
   const cached = await redis.get(cacheKey)
   if (cached) return c.json({ data: cached })
 
-  let query = supabase.from('subjects').select('*').eq('country_code', country).order('name')
+  let query = c.get('supabase').from('subjects').select('*').eq('country_code', country).order('name')
   if (level) query = query.eq('level', level)
 
   const { data, error } = await query
@@ -31,3 +32,5 @@ router.get('/', zValidator('query', z.object({
 })
 
 export { router as subjectsRouter }
+
+

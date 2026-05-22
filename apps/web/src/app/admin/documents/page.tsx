@@ -18,9 +18,9 @@ export default async function AdminDocumentsPage() {
 
   const { data: documents } = await supabase
     .from('documents')
-    .select('id, title, type, level, year, is_premium, created_at, subjects(name)')
+    .select('id, title, type, level, year, is_premium, corrige_url, created_at, subjects(name)')
     .order('created_at', { ascending: false })
-    .limit(50)
+    .limit(200)
 
   return <AdminDocumentsClient subjects={subjects ?? []} documents={documents ?? []} />
 }

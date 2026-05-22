@@ -1,15 +1,20 @@
-import { Hono } from 'hono'
+﻿import { Hono } from 'hono'
+import type { AppVariables } from '../lib/types.js'
 import { z } from 'zod'
 import { createHash } from 'crypto'
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import { GoogleGenAI } from '@google/genai'
+import { SupabaseClient } from '@supabase/supabase-js'
+import { Database } from '@alpha-kelassi/types'
 import { authMiddleware } from '../middleware/auth.js'
-import { supabase } from '../lib/supabase.js'
+
 import { redis } from '../lib/redis.js'
 import { searchRelevantChunks } from '../lib/vector-search.js'
 import { checkAndIncrementQuota, getQuotaStatus } from '../lib/quota.js'
 
-const router = new Hono()
-const genai = new GoogleGenerativeAI(process.env['GEMINI_API_KEY']!)
+const router = new Hono<{ Variables: AppVariables }>();
+
+function sanitizePrompt(text: string): string { return text.replace(/<(?:.|\n)*?>/gm, '').trim(); }
+const genai = new GoogleGenAI({ apiKey: process.env['GEMINI_API_KEY']! })
 
 router.use('*', authMiddleware)
 
@@ -19,36 +24,35 @@ const chatSchema = z.object({
   document_id: z.string().uuid().optional(),
 })
 
-const SYSTEM_PROMPT = `Tu es Kelassi, un tuteur pédagogique expert pour les élèves congolais préparant le BEPC et le BAC au Congo Brazzaville.
+const SYSTEM_PROMPT = `Tu es Kelassi, un tuteur pÃ©dagogique expert pour les Ã©lÃ¨ves congolais prÃ©parant le BEPC et le BAC au Congo Brazzaville.
 
-MÉTHODE FEYNMAN (obligatoire) :
-1. Reformule la question en termes simples, comme si l'élève avait 12 ans
-2. Explique le concept avec des analogies tirées de la vie quotidienne congolaise (marché Total, fleuve Congo, agriculture, sports locaux...)
-3. Numérote chaque étape du raisonnement (Étape 1, Étape 2...)
-4. Identifie et corrige les erreurs de compréhension possibles
-5. Termine TOUJOURS par une question de vérification : "✅ Pour vérifier ta compréhension : [question simple]"
-6. Propose une flashcard : "🃏 Flashcard : [Question courte] → [Réponse courte]"
+MÃ‰THODE FEYNMAN (obligatoire) :
+1. Reformule la question en termes simples, comme si l'Ã©lÃ¨ve avait 12 ans
+2. Explique le concept avec des analogies tirÃ©es de la vie quotidienne congolaise (marchÃ© Total, fleuve Congo, agriculture, sports locaux...)
+3. NumÃ©rote chaque Ã©tape du raisonnement (Ã‰tape 1, Ã‰tape 2...)
+4. Identifie et corrige les erreurs de comprÃ©hension possibles
+5. Termine TOUJOURS par une question de vÃ©rification : "âœ… Pour vÃ©rifier ta comprÃ©hension : [question simple]"
+6. Propose une flashcard : "ðŸƒ Flashcard : [Question courte] â†’ [RÃ©ponse courte]"
 
-RÈGLES :
-- Réponds UNIQUEMENT en français
-- Cite les numéros de page si disponibles dans le contexte
-- Si la réponse n'est pas dans le contexte du cours, dis : "Je n'ai pas cette information dans les cours disponibles. Consulte ton manuel de [matière]."
-- Formules mathématiques : utilise la notation LaTeX entre $ (ex: $x^2 + y^2 = z^2$)
-- Maximum 400 mots par réponse`
+RÃˆGLES :
+- RÃ©ponds UNIQUEMENT en franÃ§ais
+- Cite les numÃ©ros de page si disponibles dans le contexte
+- Si la rÃ©ponse n'est pas dans le contexte du cours, dis : "Je n'ai pas cette information dans les cours disponibles. Consulte ton manuel de [matiÃ¨re]."
+- Formules mathÃ©matiques : utilise la notation LaTeX entre $ (ex: $x^2 + y^2 = z^2$)
+- Maximum 400 mots par rÃ©ponse`
 
-// GET /ai/quota — quota restant
+// GET /ai/quota â€” quota restant
 router.get('/quota', async (c) => {
   const userId = c.get('userId') as string
-  const { data: profile } = await supabase.from('users').select('plan').eq('id', userId).single()
+  const { data: profile } = await c.get('supabase').from('users').select('plan').eq('id', userId).single()
   const status = await getQuotaStatus(userId, profile?.plan ?? 'free')
   return c.json({ data: status })
 })
 
-// GET /ai/sessions — liste des sessions de chat
+// GET /ai/sessions â€” liste des sessions de chat
 router.get('/sessions', async (c) => {
   const userId = c.get('userId') as string
-  const { data } = await supabase
-    .from('chat_sessions')
+  const { data } = await c.get('supabase').from('chat_sessions')
     .select('id, created_at, document_id, documents(title)')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
@@ -56,14 +60,13 @@ router.get('/sessions', async (c) => {
   return c.json({ data: data ?? [] })
 })
 
-// GET /ai/sessions/:id/messages — historique d'une session
+// GET /ai/sessions/:id/messages â€” historique d'une session
 router.get('/sessions/:id/messages', async (c) => {
   const userId = c.get('userId') as string
   const sessionId = c.req.param('id')
 
-  // Vérifie que la session appartient à l'utilisateur
-  const { data: session } = await supabase
-    .from('chat_sessions')
+  // VÃ©rifie que la session appartient Ã  l'utilisateur
+  const { data: session } = await c.get('supabase').from('chat_sessions')
     .select('id')
     .eq('id', sessionId)
     .eq('user_id', userId)
@@ -71,8 +74,7 @@ router.get('/sessions/:id/messages', async (c) => {
 
   if (!session) return c.json({ error: { code: 'NOT_FOUND' } }, 404)
 
-  const { data: messages } = await supabase
-    .from('chat_messages')
+  const { data: messages } = await c.get('supabase').from('chat_messages')
     .select('id, role, content, created_at')
     .eq('session_id', sessionId)
     .order('created_at', { ascending: true })
@@ -80,13 +82,13 @@ router.get('/sessions/:id/messages', async (c) => {
   return c.json({ data: messages ?? [] })
 })
 
-// POST /ai/chat — streaming SSE
+// POST /ai/chat â€” streaming SSE
 router.post('/chat', async (c) => {
   const userId = c.get('userId') as string
   const body = chatSchema.parse(await c.req.json())
 
   // 1. Plan + quota
-  const { data: profile } = await supabase.from('users').select('plan').eq('id', userId).single()
+  const { data: profile } = await c.get('supabase').from('users').select('plan').eq('id', userId).single()
   const plan = profile?.plan ?? 'free'
   const quota = await checkAndIncrementQuota(userId, plan)
 
@@ -94,29 +96,28 @@ router.post('/chat', async (c) => {
     return c.json({
       error: {
         code: 'QUOTA_EXCEEDED',
-        message: `Limite journalière atteinte (${plan === 'free' ? '10' : '200'} questions/jour). ${plan === 'free' ? 'Passe à Premium pour continuer.' : 'Réessaie demain.'}`,
+        message: `Limite journaliÃ¨re atteinte (${plan === 'free' ? '5' : '200'} questions/jour). ${plan === 'free' ? 'Passe Ã  Premium pour continuer.' : 'RÃ©essaie demain.'}`,
         remaining: 0,
       },
     }, 429)
   }
 
-  // 2. Session : crée ou récupère
+  // 2. Session : crÃ©e ou rÃ©cupÃ¨re
   let sessionId = body.session_id
   if (!sessionId) {
-    const { data: session } = await supabase
-      .from('chat_sessions')
+    const { data: session } = await c.get('supabase').from('chat_sessions')
       .insert({ user_id: userId, document_id: body.document_id ?? null })
       .select('id')
       .single()
     sessionId = session!.id
   }
 
-  // 3. Cache Redis (clé = SHA256 de la question normalisée)
-  const cacheKey = `cache:chat:${createHash('sha256').update(body.question.toLowerCase().trim()).digest('hex')}`
+  // 3. Cache Redis (clÃ© = SHA256 de la question normalisÃ©e)
+  const cacheKey = `cache:chat:${createHash('sha256').update(sanitizePrompt(body.question).toLowerCase().trim()).digest('hex')}`
   const cached = await redis.get<string>(cacheKey)
   if (cached) {
     // Sauvegarde async sans bloquer
-    saveChatMessages(sessionId, body.question, cached).catch(() => {})
+    saveChatMessages(c.get('supabase'), sessionId, sanitizePrompt(body.question), cached).catch(() => {})
     return new Response(cached, {
       headers: {
         'Content-Type': 'text/event-stream',
@@ -129,15 +130,14 @@ router.post('/chat', async (c) => {
   }
 
   // 4. Recherche vectorielle
-  const chunks = await searchRelevantChunks(body.question, {
+  const chunks = await searchRelevantChunks(sanitizePrompt(body.question), {
     matchCount: 5,
     minSimilarity: 0.72,
     documentId: body.document_id,
   })
 
   // 5. Historique (5 derniers tours)
-  const { data: history } = await supabase
-    .from('chat_messages')
+  const { data: history } = await c.get('supabase').from('chat_messages')
     .select('role, content')
     .eq('session_id', sessionId)
     .order('created_at', { ascending: false })
@@ -145,7 +145,7 @@ router.post('/chat', async (c) => {
 
   const historyText = (history ?? [])
     .reverse()
-    .map((m) => `${m.role === 'user' ? 'Élève' : 'Kelassi'}: ${m.content}`)
+    .map((m) => `${m.role === 'user' ? 'Ã‰lÃ¨ve' : 'Kelassi'}: ${m.content}`)
     .join('\n')
 
   // 6. Construction du prompt
@@ -155,17 +155,16 @@ router.post('/chat', async (c) => {
 
   const userPrompt = [
     `CONTEXTE DU COURS :\n${contextText}`,
-    historyText ? `HISTORIQUE RÉCENT :\n${historyText}` : null,
-    `QUESTION DE L'ÉLÈVE :\n${body.question}`,
+    historyText ? `HISTORIQUE RÃ‰CENT :\n${historyText}` : null,
+    `QUESTION DE L'Ã‰LÃˆVE :\n${sanitizePrompt(body.question)}`,
   ].filter(Boolean).join('\n\n===\n\n')
 
   // 7. Streaming Gemini
-  const model = genai.getGenerativeModel({
-    model: 'gemini-2.0-flash',
-    systemInstruction: SYSTEM_PROMPT,
+  const stream = await genai.models.generateContentStream({
+    model: 'gemini-2.5-flash',
+    config: { systemInstruction: SYSTEM_PROMPT },
+    contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
   })
-
-  const stream = await model.generateContentStream(userPrompt)
 
   let fullResponse = ''
 
@@ -178,8 +177,8 @@ router.post('/chat', async (c) => {
         `event: meta\ndata: ${JSON.stringify({ session_id: sessionId, quota_remaining: quota.remaining, sources_count: chunks.length })}\n\n`
       ))
 
-      for await (const chunk of stream.stream) {
-        const text = chunk.text()
+      for await (const chunk of stream) {
+        const text = chunk.text
         if (text) {
           fullResponse += text
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text })}\n\n`))
@@ -189,10 +188,10 @@ router.post('/chat', async (c) => {
       controller.enqueue(encoder.encode('event: done\ndata: {}\n\n'))
       controller.close()
 
-      // Sauvegarde async après la fin du stream
+      // Sauvegarde async aprÃ¨s la fin du stream
       const { awardXP, checkAndAwardBadges } = await import('../lib/xp.js')
       Promise.all([
-        saveChatMessages(sessionId!, body.question, fullResponse),
+        saveChatMessages(c.get('supabase'), sessionId!, sanitizePrompt(body.question), fullResponse),
         redis.set(cacheKey, fullResponse, { ex: 86400 }),
         awardXP(userId, 2),
         checkAndAwardBadges(userId),
@@ -211,7 +210,7 @@ router.post('/chat', async (c) => {
   })
 })
 
-async function saveChatMessages(sessionId: string, question: string, answer: string) {
+async function saveChatMessages(supabase: SupabaseClient<Database>, sessionId: string, question: string, answer: string) {
   await supabase.from('chat_messages').insert([
     { session_id: sessionId, role: 'user', content: question },
     { session_id: sessionId, role: 'assistant', content: answer },
@@ -219,3 +218,8 @@ async function saveChatMessages(sessionId: string, question: string, answer: str
 }
 
 export { router as aiRouter }
+
+
+
+
+

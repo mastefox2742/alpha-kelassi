@@ -2,7 +2,11 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { redis } from '../lib/redis.js'
-import { authRateLimit } from '../middleware/rate-limit.js'
+import { authRateLimit, rateLimit } from '../middleware/rate-limit.js'
+
+// Rate limit strict sur la vérification OTP : 5 essais / 10 min par IP
+// Empêche le brute-force des 1 000 000 combinaisons à 6 chiffres
+const otpVerifyRateLimit = rateLimit({ windowSeconds: 600, max: 5, keyPrefix: 'otp_verify' })
 
 const router = new Hono()
 
@@ -47,6 +51,7 @@ router.post('/send-otp', authRateLimit, zValidator('json', sendOtpSchema), async
 // POST /api/auth/verify-otp — vérification manuelle (fallback hors Supabase Auth)
 router.post(
   '/verify-otp',
+  otpVerifyRateLimit,
   zValidator('json', z.object({ phone: z.string(), otp: z.string().length(6) })),
   async (c) => {
     const { phone, otp } = c.req.valid('json')

@@ -1,17 +1,17 @@
-import { Hono } from 'hono'
+﻿import { Hono } from 'hono'
+import type { AppVariables } from '../lib/types.js'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
-import { supabase } from '../lib/supabase.js'
+
 import { authMiddleware } from '../middleware/auth.js'
 
-const router = new Hono()
+const router = new Hono<{ Variables: AppVariables }>()
 router.use('*', authMiddleware)
 
 // GET /api/onboarding/status
 router.get('/status', async (c) => {
   const userId = c.get('userId') as string
-  const { data: user } = await supabase
-    .from('users')
+  const { data: user } = await c.get('supabase').from('users')
     .select('onboarding_completed, study_level_pref, subject_ids_pref')
     .eq('id', userId)
     .single()
@@ -30,26 +30,25 @@ router.post(
     const userId = c.get('userId') as string
     const { level, subject_ids } = c.req.valid('json')
 
-    // Marque l'onboarding terminé + sauvegarde les préférences
-    await supabase.from('users').update({
+    // Marque l'onboarding terminÃ© + sauvegarde les prÃ©fÃ©rences
+    await c.get('supabase').from('users').update({
       onboarding_completed: true,
       study_level_pref:    level,
       subject_ids_pref:    subject_ids,
     }).eq('id', userId)
 
-    // Crée les entrées user_progress pour les matières choisies
+    // CrÃ©e les entrÃ©es user_progress pour les matiÃ¨res choisies
     const progressRows = subject_ids.map((sid) => ({
       user_id:    userId,
       subject_id: sid,
     }))
-    await supabase.from('user_progress').upsert(progressRows, {
+    await c.get('supabase').from('user_progress').upsert(progressRows, {
       onConflict:     'user_id,subject_id',
       ignoreDuplicates: true,
     })
 
-    // Trouve le premier document indexé pour le niveau choisi → suggère une flashcard
-    const { data: doc } = await supabase
-      .from('documents')
+    // Trouve le premier document indexÃ© pour le niveau choisi â†’ suggÃ¨re une flashcard
+    const { data: doc } = await c.get('supabase').from('documents')
       .select('id, title')
       .eq('level', level)
       .eq('type', 'cours')
@@ -68,3 +67,5 @@ router.post(
 )
 
 export { router as onboardingRouter }
+
+

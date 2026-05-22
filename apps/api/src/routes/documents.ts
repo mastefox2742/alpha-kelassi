@@ -1,11 +1,13 @@
-import { Hono } from 'hono'
+﻿import { Hono } from 'hono'
+import type { AppVariables } from '../lib/types.js'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
-import { supabase } from '../lib/supabase.js'
+
 import { redis } from '../lib/redis.js'
 import { authMiddleware } from '../middleware/auth.js'
+import { supabaseAdmin } from '../lib/supabase.js'
 
-const router = new Hono()
+const router = new Hono<{ Variables: AppVariables }>()
 
 router.use('*', authMiddleware)
 
@@ -21,16 +23,15 @@ router.get('/', zValidator('query', z.object({
   const { subject_id, type, level, year, cursor, limit } = c.req.valid('query')
   const userId = c.get('userId') as string
 
-  // Vérifie le plan de l'utilisateur
-  const { data: user } = await supabase.from('users').select('plan').eq('id', userId).single()
+  // VÃ©rifie le plan de l'utilisateur
+  const { data: user } = await c.get('supabase').from('users').select('plan').eq('id', userId).single()
   const isPremium = user?.plan === 'premium'
 
   const cacheKey = `docs:${subject_id}:${type}:${level}:${year}:${cursor}:${limit}:${isPremium}`
   const cached = await redis.get(cacheKey)
   if (cached) return c.json(cached)
 
-  let query = supabase
-    .from('documents')
+  let query = c.get('supabase').from('documents')
     .select('id, title, type, level, year, session, subject_id, is_premium, country_code, created_at')
     .order('created_at', { ascending: false })
     .limit(limit + 1)
@@ -54,13 +55,12 @@ router.get('/', zValidator('query', z.object({
   return c.json(result)
 })
 
-// GET /api/documents/:id — détail + URL PDF signée 15 min
+// GET /api/documents/:id â€” dÃ©tail + URL PDF signÃ©e 15 min
 router.get('/:id', async (c) => {
   const id = c.req.param('id')
   const userId = c.get('userId') as string
 
-  const { data: doc, error } = await supabase
-    .from('documents')
+  const { data: doc, error } = await c.get('supabase').from('documents')
     .select('*')
     .eq('id', id)
     .single()
@@ -68,20 +68,20 @@ router.get('/:id', async (c) => {
   if (error || !doc) return c.json({ error: { code: 'NOT_FOUND', message: 'Document introuvable' } }, 404)
 
   if (doc.is_premium) {
-    const { data: user } = await supabase.from('users').select('plan').eq('id', userId).single()
+    const { data: user } = await c.get('supabase').from('users').select('plan').eq('id', userId).single()
     if (user?.plan !== 'premium') {
       return c.json({ error: { code: 'FORBIDDEN', message: 'Abonnement premium requis' } }, 403)
     }
   }
 
-  // Génère une URL signée (15 min) pour le PDF
+  // GÃ©nÃ¨re une URL signÃ©e (15 min) pour le PDF
   const bucket = doc.is_premium ? 'pdfs-premium' : 'pdfs-public'
   const filePath = doc.pdf_url.split('/').pop() ?? ''
-  const { data: signed } = await supabase.storage
+  const { data: signed } = await supabaseAdmin.storage
     .from(bucket)
     .createSignedUrl(filePath, 900)
 
-  // XP + tracking vue en arrière-plan
+  // XP + tracking vue en arriÃ¨re-plan
   const { awardXP, trackDocumentView, checkAndAwardBadges } = await import('../lib/xp.js')
   Promise.all([
     trackDocumentView(userId, id),
@@ -92,12 +92,11 @@ router.get('/:id', async (c) => {
   return c.json({ data: { ...doc, signed_url: signed?.signedUrl } })
 })
 
-// GET /api/documents/:id/exercises — chunks exercices pour contextualisation Kelassi
+// GET /api/documents/:id/exercises â€” chunks exercices pour contextualisation Kelassi
 router.get('/:id/exercises', async (c) => {
   const id = c.req.param('id')
 
-  const { data: chunks, error } = await supabase
-    .from('document_chunks')
+  const { data: chunks, error } = await c.get('supabase').from('document_chunks')
     .select('id, content, chunk_index, page_number, metadata')
     .eq('document_id', id)
     .filter('metadata->>is_exercise', 'eq', 'true')
@@ -108,12 +107,11 @@ router.get('/:id/exercises', async (c) => {
   return c.json({ data: chunks ?? [] })
 })
 
-// GET /api/documents/:id/text — texte extrait pour mode hors-ligne
+// GET /api/documents/:id/text â€” texte extrait pour mode hors-ligne
 router.get('/:id/text', async (c) => {
   const id = c.req.param('id')
 
-  const { data: doc } = await supabase
-    .from('documents')
+  const { data: doc } = await c.get('supabase').from('documents')
     .select('text_content, is_premium')
     .eq('id', id)
     .single()
@@ -122,7 +120,7 @@ router.get('/:id/text', async (c) => {
 
   if (doc.is_premium) {
     const userId = c.get('userId') as string
-    const { data: user } = await supabase.from('users').select('plan').eq('id', userId).single()
+    const { data: user } = await c.get('supabase').from('users').select('plan').eq('id', userId).single()
     if (user?.plan !== 'premium') {
       return c.json({ error: { code: 'FORBIDDEN', message: 'Abonnement premium requis' } }, 403)
     }
@@ -132,3 +130,7 @@ router.get('/:id/text', async (c) => {
 })
 
 export { router as documentsRouter }
+
+
+
+

@@ -1,8 +1,9 @@
-import { Hono } from 'hono'
-import { supabase } from '../../lib/supabase.js'
+﻿import { Hono } from 'hono'
+import type { AppVariables } from '../../lib/types.js'
+import { supabaseAdmin as supabase } from '../../lib/supabase.js'
 import { authMiddleware } from '../../middleware/auth.js'
 
-const router = new Hono()
+const router = new Hono<{ Variables: AppVariables }>()
 router.use('*', authMiddleware)
 
 router.use('*', async (c, next) => {
@@ -40,7 +41,7 @@ router.get('/', async (c) => {
       .select('plan, status, stripe_sub_id, cinetpay_ref, expires_at, created_at')
       .eq('status', 'active'),
 
-    // Questions récentes (pour cache prioritaire)
+    // Questions rÃ©centes (pour cache prioritaire)
     supabase
       .from('chat_messages')
       .select('content, created_at')
@@ -52,7 +53,7 @@ router.get('/', async (c) => {
     supabase.from('users').select('id', { count: 'exact', head: true }),
   ])
 
-  // Agrège les vues par document côté JS
+  // AgrÃ¨ge les vues par document cÃ´tÃ© JS
   const viewsByDoc = new Map<string, { count: number; title: string; type: string; level: string }>()
   for (const row of topDocs ?? []) {
     const doc = row.documents as { title: string; type: string; level: string } | null
@@ -75,14 +76,14 @@ router.get('/', async (c) => {
     .map(([day, users]) => ({ day, active_users: users.size }))
     .sort((a, b) => a.day.localeCompare(b.day))
 
-  // Revenus estimés
+  // Revenus estimÃ©s
   const stripeCount = (activeSubs ?? []).filter((s) => s.stripe_sub_id).length
   const cinetpayCount = (activeSubs ?? []).filter((s) => s.cinetpay_ref).length
   const revenueEstimate = {
     active_subscriptions: (activeSubs ?? []).length,
     stripe_count: stripeCount,
     cinetpay_count: cinetpayCount,
-    // Prix indicatifs : 2000 FCFA/mois ≈ 3 EUR, 20000 FCFA/an ≈ 30 EUR
+    // Prix indicatifs : 2000 FCFA/mois â‰ˆ 3 EUR, 20000 FCFA/an â‰ˆ 30 EUR
     monthly_revenue_fcfa: stripeCount * 2000 + cinetpayCount * 2000,
   }
 
@@ -104,3 +105,5 @@ router.get('/', async (c) => {
 })
 
 export { router as adminAnalyticsRouter }
+
+
