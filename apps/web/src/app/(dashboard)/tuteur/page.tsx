@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
 
@@ -18,7 +17,6 @@ interface Session {
   documents: { title: string } | null
 }
 
-const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
 const SUGGESTIONS = [
   { icon: '🔬', text: 'Explique-moi la photosynthèse' },
@@ -39,7 +37,6 @@ export default function TuteurPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const supabase = createClient()
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -54,23 +51,17 @@ export default function TuteurPage() {
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
   async function loadSessions() {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) return
-    const res = await fetch(`${API_URL}/api/ai/sessions`, {
-      headers: { Authorization: `Bearer ${session.access_token}` },
-    })
-    const json = await res.json()
+    const res = await fetch('/api/ai/sessions')
+    if (!res.ok) return
+    const json = await res.json() as { data?: typeof sessions }
     setSessions(json.data ?? [])
   }
 
   async function loadSessionMessages(sid: string) {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) return
-    const res = await fetch(`${API_URL}/api/ai/sessions/${sid}/messages`, {
-      headers: { Authorization: `Bearer ${session.access_token}` },
-    })
-    const json = await res.json()
-    setMessages((json.data ?? []).map((m: any) => ({ ...m, id: m.id })))
+    const res = await fetch(`/api/ai/sessions/${sid}/messages`)
+    if (!res.ok) return
+    const json = await res.json() as { data?: { id: string; role: 'user' | 'assistant'; content: string }[] }
+    setMessages((json.data ?? []).map((m) => ({ ...m })))
     setSessionId(sid)
     setSidebarOpen(false)
   }
@@ -87,14 +78,12 @@ export default function TuteurPage() {
     setMessages((prev) => [...prev, userMsg, assistantMsg])
 
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) return
       const params = new URLSearchParams(window.location.search)
       const documentId = params.get('document')
 
-      const res = await fetch(`${API_URL}/api/ai/chat`, {
+      const res = await fetch('/api/ai/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question, session_id: sessionId, document_id: documentId }),
       })
 

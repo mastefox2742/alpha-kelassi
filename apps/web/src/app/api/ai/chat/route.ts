@@ -1,0 +1,204 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@/lib/supabase/server'
+import { createClient as createAdminClient } from '@supabase/supabase-js'
+import { GoogleGenAI } from '@google/genai'
+import { z } from 'zod'
+import { createHash } from 'crypto'
+import { redis } from '@/lib/redis'
+import { searchRelevantChunks } from '@/lib/ai/vector-search'
+import { checkAndIncrementQuota } from '@/lib/ai/quota'
+
+export const maxDuration = 60 // Gemini streaming peut prendre du temps
+
+const supabaseAdmin = createAdminClient(
+  process.env['NEXT_PUBLIC_SUPABASE_URL']!,
+  process.env['SUPABASE_SERVICE_ROLE_KEY']!
+)
+
+const genai = new GoogleGenAI({ apiKey: process.env['GEMINI_API_KEY']! })
+
+const chatSchema = z.object({
+  question:    z.string().min(1).max(2000),
+  session_id:  z.string().uuid().optional(),
+  document_id: z.string().uuid().optional(),
+})
+
+// Prompt système — Kelassi, tuteur pédagogique congolais
+const SYSTEM_PROMPT = `Tu es Kelassi, un tuteur pédagogique expert pour les élèves congolais préparant le BEPC et le BAC au Congo Brazzaville.
+
+MÉTHODE FEYNMAN (obligatoire) :
+1. Reformule la question en termes simples, comme si l'élève avait 12 ans
+2. Explique le concept avec des analogies tirées de la vie quotidienne congolaise (marché Total, fleuve Congo, agriculture, sports locaux…)
+3. Numérotechaque étape du raisonnement (Étape 1, Étape 2…)
+4. Identifie et corrige les erreurs de compréhension possibles
+5. Termine TOUJOURS par une question de vérification : "✅ Pour vérifier ta compréhension : [question simple]"
+6. Propose une flashcard : "🃏 **Flashcard** : [Question courte] → [Réponse courte]"
+
+RÈGLES :
+- Réponds UNIQUEMENT en français
+- Formules mathématiques : utilise la notation LaTeX — inline \`$...$\` et bloc \`$$...$$\`
+- Cite les numéros de page si disponibles dans le contexte
+- Si la réponse n'est pas dans le contexte du cours, dis : "Je n'ai pas cette information dans les cours disponibles. Consulte ton manuel."
+- Maximum 400 mots par réponse
+- Structure ta réponse avec du Markdown (titres ##, listes, **gras**)`
+
+function sanitize(text: string): string {
+  return text.replace(/<(?:.|\n)*?>/gm, '').trim()
+}
+
+export async function POST(req: NextRequest) {
+  // Auth via cookie Supabase
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+
+  // Validation du body
+  let body: z.infer<typeof chatSchema>
+  try {
+    body = chatSchema.parse(await req.json())
+  } catch {
+    return NextResponse.json({ error: 'Corps invalide' }, { status: 400 })
+  }
+
+  // Plan + quota
+  const { data: profile } = await supabaseAdmin
+    .from('users').select('plan').eq('id', user.id).single()
+  const plan  = profile?.plan ?? 'free'
+  const quota = await checkAndIncrementQuota(user.id, plan)
+
+  if (!quota.allowed) {
+    return NextResponse.json({
+      error: {
+        code: 'QUOTA_EXCEEDED',
+        message: `Limite journalière atteinte (${plan === 'free' ? '5' : '200'} questions/jour).${plan === 'free' ? ' Passe à Premium pour continuer.' : ' Réessaie demain.'}`,
+        remaining: 0,
+      },
+    }, { status: 429 })
+  }
+
+  const question = sanitize(body.question)
+
+  // Session : crée ou récupère
+  let sessionId = body.session_id
+  if (!sessionId) {
+    const { data: session } = await supabase
+      .from('chat_sessions')
+      .insert({ user_id: user.id, document_id: body.document_id ?? null })
+      .select('id')
+      .single()
+    sessionId = session!.id
+  }
+
+  // Cache Redis — clé = SHA256 de la question normalisée
+  const cacheKey = `cache:chat:${createHash('sha256').update(question.toLowerCase()).digest('hex')}`
+  const cached = await redis.get<string>(cacheKey)
+  if (cached) {
+    saveChatMessages(supabase, sessionId, question, cached).catch(() => {})
+    return new Response(cached, {
+      headers: {
+        'Content-Type':      'text/event-stream',
+        'Cache-Control':     'no-cache',
+        'X-Session-Id':      sessionId,
+        'X-Quota-Remaining': String(quota.remaining),
+        'X-Cache':           'HIT',
+      },
+    })
+  }
+
+  // Recherche vectorielle RAG
+  const chunks = await searchRelevantChunks(question, {
+    matchCount:    5,
+    minSimilarity: 0.72,
+    documentId:    body.document_id,
+  })
+
+  // Historique des 5 derniers tours
+  const { data: history } = await supabase
+    .from('chat_messages')
+    .select('role, content')
+    .eq('session_id', sessionId)
+    .order('created_at', { ascending: false })
+    .limit(10)
+
+  const historyText = (history ?? [])
+    .reverse()
+    .map((m) => `${m.role === 'user' ? 'Élève' : 'Kelassi'}: ${m.content}`)
+    .join('\n')
+
+  // Construction du prompt enrichi avec le contexte RAG
+  const contextText = chunks.length > 0
+    ? chunks.map((c, i) =>
+        `[Source ${i + 1}${c.page_number ? `, page ${c.page_number}` : ''}]\n${c.content}`
+      ).join('\n\n---\n\n')
+    : 'Aucun contenu de cours disponible pour cette question.'
+
+  const userPrompt = [
+    `CONTEXTE DU COURS :\n${contextText}`,
+    historyText ? `HISTORIQUE RÉCENT :\n${historyText}` : null,
+    `QUESTION DE L'ÉLÈVE :\n${question}`,
+  ].filter(Boolean).join('\n\n===\n\n')
+
+  // Streaming Gemini
+  const stream = await genai.models.generateContentStream({
+    model:    'gemini-2.5-flash',
+    config:   { systemInstruction: SYSTEM_PROMPT },
+    contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+  })
+
+  let fullResponse = ''
+
+  const readable = new ReadableStream({
+    async start(controller) {
+      const enc = new TextEncoder()
+
+      // Premier événement : métadonnées
+      controller.enqueue(enc.encode(
+        `event: meta\ndata: ${JSON.stringify({
+          session_id:      sessionId,
+          quota_remaining: quota.remaining,
+          sources_count:   chunks.length,
+        })}\n\n`
+      ))
+
+      for await (const chunk of stream) {
+        const text = chunk.text
+        if (text) {
+          fullResponse += text
+          controller.enqueue(enc.encode(`data: ${JSON.stringify({ text })}\n\n`))
+        }
+      }
+
+      controller.enqueue(enc.encode('event: done\ndata: {}\n\n'))
+      controller.close()
+
+      // Sauvegarde asynchrone (ne bloque pas le stream)
+      Promise.all([
+        saveChatMessages(supabase, sessionId!, question, fullResponse),
+        redis.set(cacheKey, fullResponse, { ex: 86400 }),
+      ]).catch(console.error)
+    },
+  })
+
+  return new Response(readable, {
+    headers: {
+      'Content-Type':      'text/event-stream',
+      'Cache-Control':     'no-cache',
+      'Connection':        'keep-alive',
+      'X-Session-Id':      sessionId,
+      'X-Quota-Remaining': String(quota.remaining),
+    },
+  })
+}
+
+async function saveChatMessages(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  sessionId: string,
+  question: string,
+  answer: string
+) {
+  await supabase.from('chat_messages').insert([
+    { session_id: sessionId, role: 'user',      content: question },
+    { session_id: sessionId, role: 'assistant', content: answer   },
+  ])
+}

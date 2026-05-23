@@ -68,6 +68,15 @@ export default async function ExamenDetailPage({ params }: { params: Promise<{ i
     .order('chunk_index')
     .limit(30)
 
+  // Chunks de contexte (non-exercices) pour détecter les chapitres et parties
+  const { data: contextChunks } = await supabase
+    .from('document_chunks')
+    .select('chunk_index, content')
+    .eq('document_id', id)
+    .neq('metadata->>is_exercise', 'true')
+    .order('chunk_index')
+    .limit(60)
+
   const enonceUrl = enonceSign?.signedUrl ?? null
   const corrigeUrl = (corrigeSignResult as { data?: { signedUrl: string } } | null)?.data?.signedUrl ?? null
   const lvl = LEVEL_CONFIG[doc.level] ?? { label: doc.level, bg: 'bg-gray-100', color: 'text-gray-600' }
@@ -162,6 +171,7 @@ export default async function ExamenDetailPage({ params }: { params: Promise<{ i
             corrigeUrl={corrigeUrl}
             corrigeIsPremium={!!doc.is_premium}
             exercises={exercises ?? []}
+            contextChunks={contextChunks ?? []}
           />
         ) : textContent ? (
           /* Fichier DOCX / TXT → afficher le texte extrait comme pour les cours */
