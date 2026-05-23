@@ -1,11 +1,20 @@
 import { GoogleGenAI } from '@google/genai'
 
-const genai = new GoogleGenAI({ apiKey: process.env['GEMINI_API_KEY']! })
 const EMBED_MODEL = 'gemini-embedding-2'
+
+// Lazy — instancié seulement au premier appel, jamais au build time
+let _genai: GoogleGenAI | null = null
+function getGenai(): GoogleGenAI {
+  if (!_genai) {
+    const key = process.env['GEMINI_API_KEY'] ?? ''
+    _genai = new GoogleGenAI({ apiKey: key })
+  }
+  return _genai
+}
 
 /** Génère un embedding pour une requête utilisateur (RAG retrieval). */
 export async function embedQuery(text: string): Promise<number[]> {
-  const result = await genai.models.embedContent({
+  const result = await getGenai().models.embedContent({
     model: EMBED_MODEL,
     contents: text,
     config: { taskType: 'RETRIEVAL_QUERY' },

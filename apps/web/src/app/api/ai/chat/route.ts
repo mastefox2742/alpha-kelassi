@@ -8,14 +8,28 @@ import { redis } from '@/lib/redis'
 import { searchRelevantChunks } from '@/lib/ai/vector-search'
 import { checkAndIncrementQuota } from '@/lib/ai/quota'
 
-export const maxDuration = 60 // Gemini streaming peut prendre du temps
+export const maxDuration = 60
 
-const supabaseAdmin = createAdminClient(
-  process.env['NEXT_PUBLIC_SUPABASE_URL']!,
-  process.env['SUPABASE_SERVICE_ROLE_KEY']!
-)
+// ── Clients lazy (jamais instanciés au build time) ──────────────────────────
 
-const genai = new GoogleGenAI({ apiKey: process.env['GEMINI_API_KEY']! })
+let _genai: GoogleGenAI | null = null
+function getGenai(): GoogleGenAI {
+  if (!_genai) _genai = new GoogleGenAI({ apiKey: process.env['GEMINI_API_KEY'] ?? '' })
+  return _genai
+}
+
+let _admin: ReturnType<typeof createAdminClient> | null = null
+function getAdmin() {
+  if (!_admin) {
+    _admin = createAdminClient(
+      process.env['NEXT_PUBLIC_SUPABASE_URL']!,
+      process.env['SUPABASE_SERVICE_ROLE_KEY']!
+    )
+  }
+  return _admin
+}
+
+// ── Validation ───────────────────────────────────────────────────────────────
 
 const chatSchema = z.object({
   question:    z.string().min(1).max(2000),
@@ -23,7 +37,8 @@ const chatSchema = z.object({
   document_id: z.string().uuid().optional(),
 })
 
-// Prompt système — Kelassi, tuteur pédagogique congolais
+// ── Prompt système ───────────────────────────────────────────────────────────
+
 const SYSTEM_PROMPT = `Tu es Kelassi, un tuteur pédagogique expert pour les élèves congolais préparant le BEPC et le BAC au Congo Brazzaville.
 
 MÉTHODE FEYNMAN (obligatoire) :
@@ -46,8 +61,18 @@ function sanitize(text: string): string {
   return text.replace(/<(?:.|\n)*?>/gm, '').trim()
 }
 
+// ── Handler principal ────────────────────────────────────────────────────────
+
 export async function POST(req: NextRequest) {
-  // Auth via cookie Supabase
+  // Vérifie la clé Gemini avant tout
+  if (!process.env['GEMINI_API_KEY']) {
+    return NextResponse.json(
+      { error: { code: 'MISCONFIGURED', message: 'GEMINI_API_KEY non configurée sur le serveur.' } },
+      { status: 503 }
+    )
+  }
+
+  // Auth via cookie Supabase SSR
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
@@ -61,7 +86,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Plan + quota
-  const { data: profile } = await supabaseAdmin
+  const { data: profile } = await getAdmin()
     .from('users').select('plan').eq('id', user.id).single()
   const plan  = profile?.plan ?? 'free'
   const quota = await checkAndIncrementQuota(user.id, plan)
@@ -70,7 +95,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       error: {
         code: 'QUOTA_EXCEEDED',
-        message: `Limite journalière atteinte (${plan === 'free' ? '5' : '200'} questions/jour).${plan === 'free' ? ' Passe à Premium pour continuer.' : ' Réessaie demain.'}`,
+        message: `Limite journalière atteinte (${plan === 'free' ? '5' : '200'} questions/jour).${
+          plan === 'free' ? ' Passe à Premium pour continuer.' : ' Réessaie demain.'
+        }`,
         remaining: 0,
       },
     }, { status: 429 })
@@ -89,11 +116,11 @@ export async function POST(req: NextRequest) {
     sessionId = session!.id
   }
 
-  // Cache Redis — clé = SHA256 de la question normalisée
+  // Cache Redis
   const cacheKey = `cache:chat:${createHash('sha256').update(question.toLowerCase()).digest('hex')}`
   const cached = await redis.get<string>(cacheKey)
   if (cached) {
-    saveChatMessages(supabase, sessionId, question, cached).catch(() => {})
+    saveChatMessages(getAdmin(), sessionId, question, cached).catch(() => {})
     return new Response(cached, {
       headers: {
         'Content-Type':      'text/event-stream',
@@ -125,7 +152,7 @@ export async function POST(req: NextRequest) {
     .map((m) => `${m.role === 'user' ? 'Élève' : 'Kelassi'}: ${m.content}`)
     .join('\n')
 
-  // Construction du prompt enrichi avec le contexte RAG
+  // Prompt enrichi avec contexte RAG
   const contextText = chunks.length > 0
     ? chunks.map((c, i) =>
         `[Source ${i + 1}${c.page_number ? `, page ${c.page_number}` : ''}]\n${c.content}`
@@ -138,8 +165,8 @@ export async function POST(req: NextRequest) {
     `QUESTION DE L'ÉLÈVE :\n${question}`,
   ].filter(Boolean).join('\n\n===\n\n')
 
-  // Streaming Gemini
-  const stream = await genai.models.generateContentStream({
+  // Streaming Gemini 2.5 Flash
+  const stream = await getGenai().models.generateContentStream({
     model:    'gemini-2.5-flash',
     config:   { systemInstruction: SYSTEM_PROMPT },
     contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
@@ -151,7 +178,7 @@ export async function POST(req: NextRequest) {
     async start(controller) {
       const enc = new TextEncoder()
 
-      // Premier événement : métadonnées
+      // Métadonnées en premier
       controller.enqueue(enc.encode(
         `event: meta\ndata: ${JSON.stringify({
           session_id:      sessionId,
@@ -171,9 +198,9 @@ export async function POST(req: NextRequest) {
       controller.enqueue(enc.encode('event: done\ndata: {}\n\n'))
       controller.close()
 
-      // Sauvegarde asynchrone (ne bloque pas le stream)
+      // Sauvegarde asynchrone via admin client (le client cookié peut expirer dans le callback)
       Promise.all([
-        saveChatMessages(supabase, sessionId!, question, fullResponse),
+        saveChatMessages(getAdmin(), sessionId!, question, fullResponse),
         redis.set(cacheKey, fullResponse, { ex: 86400 }),
       ]).catch(console.error)
     },
@@ -190,13 +217,8 @@ export async function POST(req: NextRequest) {
   })
 }
 
-async function saveChatMessages(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  supabase: any,
-  sessionId: string,
-  question: string,
-  answer: string
-) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function saveChatMessages(supabase: any, sessionId: string, question: string, answer: string) {
   await supabase.from('chat_messages').insert([
     { session_id: sessionId, role: 'user',      content: question },
     { session_id: sessionId, role: 'assistant', content: answer   },
