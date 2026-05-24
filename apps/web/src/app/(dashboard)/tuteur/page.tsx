@@ -120,6 +120,7 @@ export default function TuteurPage() {
       const reader = res.body!.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
+      let hasContent = false
 
       while (true) {
         const { done, value } = await reader.read()
@@ -128,7 +129,7 @@ export default function TuteurPage() {
         const lines = buffer.split('\n')
         buffer = lines.pop() ?? ''
         for (const line of lines) {
-          if (line.startsWith('event: meta') || line.startsWith('event: done')) continue
+          if (!line.trim() || line.startsWith('event:')) continue
           if (line.startsWith('data: ')) {
             try {
               const payload = JSON.parse(line.slice(6))
@@ -136,15 +137,28 @@ export default function TuteurPage() {
                 setMessages((prev) => prev.map((m) =>
                   m.id === assistantMsg.id ? { ...m, content: `❌ ${payload.error}`, streaming: false } : m
                 ))
-              } else if (payload.text) {
+                return
+              }
+              if (typeof payload.text === 'string' && payload.text.length > 0) {
+                hasContent = true
                 setMessages((prev) => prev.map((m) =>
                   m.id === assistantMsg.id ? { ...m, content: m.content + payload.text } : m
                 ))
               }
               if (payload.sources_count !== undefined) setSourcesCount(payload.sources_count)
-            } catch {}
+            } catch { /* ligne non-JSON, ignorer */ }
           }
         }
+      }
+
+      // Si le stream s'est fermé sans aucun contenu → afficher un message d'erreur clair
+      if (!hasContent) {
+        setMessages((prev) => prev.map((m) =>
+          m.id === assistantMsg.id
+            ? { ...m, content: '❌ Kelassi n\'a pas pu répondre. Réessaie dans quelques secondes.', streaming: false }
+            : m
+        ))
+        return
       }
 
       setMessages((prev) => prev.map((m) => m.id === assistantMsg.id ? { ...m, streaming: false } : m))

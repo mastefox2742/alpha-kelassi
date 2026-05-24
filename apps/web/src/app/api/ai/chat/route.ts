@@ -184,10 +184,10 @@ export async function POST(req: NextRequest) {
     `QUESTION DE L'ÉLÈVE :\n${question}`,
   ].filter(Boolean).join('\n\n===\n\n')
 
-  // Streaming Gemini — thinkingBudget:0 pour désactiver le mode "réflexion"
-  // qui bloque l'émission de tokens pendant parfois 30-60s (timeout Vercel)
+  // thinkingBudget:0 — désactive le mode "réflexion" de Gemini 2.5 Flash
+  // sans ça il réfléchit en silence 30-60s avant d'émettre le moindre token
   const stream = await getGenai().models.generateContentStream({
-    model:    'gemini-1.5-flash',
+    model:    'gemini-2.5-flash',
     config:   {
       systemInstruction: SYSTEM_PROMPT,
       thinkingConfig:    { thinkingBudget: 0 },
