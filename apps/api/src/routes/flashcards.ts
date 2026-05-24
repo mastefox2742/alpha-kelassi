@@ -1,4 +1,4 @@
-﻿import { Hono } from 'hono'
+import { Hono } from 'hono'
 import type { AppVariables } from '../lib/types.js'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
@@ -12,7 +12,7 @@ const genai = new GoogleGenAI({ apiKey: process.env['GEMINI_API_KEY']! })
 
 router.use('*', authMiddleware)
 
-// GET /flashcards/due â€” cartes Ã  rÃ©viser aujourd'hui
+// GET /flashcards/due — cartes à réviser aujourd'hui
 router.get('/due', async (c) => {
   const userId = c.get('userId') as string
   const limit = parseInt(c.req.query('limit') ?? '20', 10)
@@ -28,7 +28,7 @@ router.get('/due', async (c) => {
   return c.json({ data: data ?? [], count: data?.length ?? 0 })
 })
 
-// GET /flashcards â€” toutes les cartes (avec filtre optionnel)
+// GET /flashcards — toutes les cartes (avec filtre optionnel)
 router.get('/', async (c) => {
   const userId = c.get('userId') as string
   const documentId = c.req.query('document_id')
@@ -45,7 +45,7 @@ router.get('/', async (c) => {
   return c.json({ data: data ?? [] })
 })
 
-// POST /flashcards/review â€” enregistre une rÃ©vision SM-2
+// POST /flashcards/review — enregistre une révision SM-2
 router.post(
   '/review',
   zValidator('json', z.object({ flashcard_id: z.string().uuid(), quality: z.number().int().min(0).max(5) })),
@@ -79,7 +79,7 @@ router.post(
 
     if (error) return c.json({ error: { code: 'DB_ERROR', message: error.message } }, 500)
 
-    // XP + badges en arriÃ¨re-plan (non bloquant)
+    // XP + badges en arrière-plan (non bloquant)
     const xpAmount = quality >= 4 ? 3 : quality >= 3 ? 2 : 0
     if (xpAmount > 0) {
       const { awardXP, checkAndAwardBadges } = await import('../lib/xp.js')
@@ -91,7 +91,7 @@ router.post(
   }
 )
 
-// POST /flashcards/generate â€” gÃ©nÃ¨re des flashcards depuis un document
+// POST /flashcards/generate — génère des flashcards depuis un document
 router.post(
   '/generate',
   zValidator('json', z.object({ document_id: z.string().uuid(), count: z.number().int().min(1).max(20).default(10) })),
@@ -99,7 +99,7 @@ router.post(
     const userId = c.get('userId') as string
     const { document_id, count } = c.req.valid('json')
 
-    // RÃ©cupÃ¨re les chunks du document
+    // Récupère les chunks du document
     const { data: chunks } = await c.get('supabase').from('document_chunks')
       .select('content')
       .eq('document_id', document_id)
@@ -107,18 +107,18 @@ router.post(
       .limit(30)
 
     if (!chunks || chunks.length === 0) {
-      return c.json({ error: { code: 'NOT_INDEXED', message: 'Ce document n\'est pas encore indexÃ©. RÃ©essaie dans quelques minutes.' } }, 422)
+      return c.json({ error: { code: 'NOT_INDEXED', message: 'Ce document n\'est pas encore indexé. Réessaie dans quelques minutes.' } }, 422)
     }
 
     const context = chunks.map((c) => c.content).join('\n\n---\n\n').slice(0, 8000)
 
-    const prompt = `Tu es un expert pÃ©dagogique. Ã€ partir du contenu de cours ci-dessous, gÃ©nÃ¨re exactement ${count} flashcards pour aider un Ã©lÃ¨ve congolais Ã  rÃ©viser.
+    const prompt = `Tu es un expert pédagogique. À partir du contenu de cours ci-dessous, génère exactement ${count} flashcards pour aider un élève congolais à réviser.
 
-RÃ¨gles :
-- Recto (front) : question courte et prÃ©cise (max 120 caractÃ¨res)
-- Verso (back) : rÃ©ponse concise (max 300 caractÃ¨res), avec un exemple concret si possible
-- Couvre les concepts clÃ©s, dÃ©finitions et formules importantes
-- Varie les types : dÃ©finition, application, exemple, calcul
+Règles :
+- Recto (front) : question courte et précise (max 120 caractères)
+- Verso (back) : réponse concise (max 300 caractères), avec un exemple concret si possible
+- Couvre les concepts clés, définitions et formules importantes
+- Varie les types : définition, application, exemple, calcul
 
 Retourne UNIQUEMENT un tableau JSON valide, sans markdown, sans commentaires :
 [{"front":"...","back":"..."},...]
@@ -127,7 +127,7 @@ Contenu du cours :
 ${context}`
 
     const response = await genai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-1.5-flash',
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
     })
     const raw = response.text ?? ''
@@ -138,7 +138,7 @@ ${context}`
       cards = JSON.parse(jsonStr)
       if (!Array.isArray(cards)) throw new Error('Not an array')
     } catch {
-      return c.json({ error: { code: 'GENERATION_ERROR', message: 'Erreur de gÃ©nÃ©ration. RÃ©essaie.' } }, 500)
+      return c.json({ error: { code: 'GENERATION_ERROR', message: 'Erreur de génération. Réessaie.' } }, 500)
     }
 
     const rows = cards.slice(0, count).map((card) => ({

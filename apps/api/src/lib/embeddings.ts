@@ -3,7 +3,7 @@ import { GoogleGenAI } from '@google/genai'
 const genai = new GoogleGenAI({ apiKey: process.env['GEMINI_API_KEY']! })
 
 const BATCH_SIZE = 100
-const EMBED_MODEL = 'gemini-embedding-2'
+const EMBED_MODEL = 'text-embedding-004'
 
 export async function embedTexts(texts: string[]): Promise<number[][]> {
   const embeddings: number[][] = []

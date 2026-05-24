@@ -187,7 +187,7 @@ export async function POST(req: NextRequest) {
   // Streaming Gemini — thinkingBudget:0 pour désactiver le mode "réflexion"
   // qui bloque l'émission de tokens pendant parfois 30-60s (timeout Vercel)
   const stream = await getGenai().models.generateContentStream({
-    model:    'gemini-2.5-flash',
+    model:    'gemini-1.5-flash',
     config:   {
       systemInstruction: SYSTEM_PROMPT,
       thinkingConfig:    { thinkingBudget: 0 },

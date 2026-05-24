@@ -1,6 +1,6 @@
 import { GoogleGenAI } from '@google/genai'
 
-const EMBED_MODEL = 'gemini-embedding-2'
+const EMBED_MODEL = 'text-embedding-004'
 
 // Lazy — instancié seulement au premier appel, jamais au build time
 let _genai: GoogleGenAI | null = null
