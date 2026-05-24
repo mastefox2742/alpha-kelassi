@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 
-const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
+const API_URL = ''  // routes Next.js locales
 
 const TYPE_STYLE = {
   annonce: { bg: 'bg-blue-600',   text: 'text-white',      btn: 'bg-white/20 hover:bg-white/30 text-white' },

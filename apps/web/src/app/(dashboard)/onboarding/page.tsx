@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 
-const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
+const API_URL = ''  // routes Next.js locales
 
 const LEVELS = [
   { value: 'bepc',  label: 'BEPC',  sub: '3ème', color: 'border-blue-500 bg-blue-50 text-blue-700' },
@@ -49,17 +49,19 @@ export default function OnboardingPage() {
       if (!session) return
 
       const res = await fetch(`${API_URL}/api/onboarding/complete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ level, subject_ids: selectedSubjects }),
+        method:      'POST',
+        headers:     { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body:        JSON.stringify({ level, subject_ids: selectedSubjects }),
       })
       const json = await res.json()
 
       if (json.data?.suggested_document) {
         await fetch(`${API_URL}/api/flashcards/generate`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ document_id: json.data.suggested_document.id, count: 3 }),
+          method:      'POST',
+          headers:     { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body:        JSON.stringify({ document_id: json.data.suggested_document.id, count: 3 }),
         })
       }
 

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
-const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
+const API_URL = ''  // routes Next.js locales
 
 const TYPE_CONFIG = {
   annonce: { label: 'Annonce', color: 'bg-blue-100 text-blue-700', emoji: '📢' },

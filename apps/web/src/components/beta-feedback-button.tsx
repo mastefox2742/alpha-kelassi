@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
-const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
+const API_URL = ''  // routes Next.js locales
 
 export function BetaFeedbackButton() {
   const [open, setOpen] = useState(false)
@@ -19,11 +19,9 @@ export function BetaFeedbackButton() {
     try {
       const { data: { session } } = await supabase.auth.getSession()
       await fetch(`${API_URL}/api/feedback`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(session ? { Authorization: `Bearer ${session.access_token}` } : {}),
-        },
+        method:      'POST',
+        headers:     { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           rating,
           comment: comment.trim() || undefined,

@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 
-const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
+const API_URL = ''  // routes Next.js locales
 
 export default function SupprimerComptePage() {
   const [step, setStep] = useState<'confirm' | 'exporting' | 'deleting' | 'done' | 'error'>('confirm')
@@ -16,7 +16,7 @@ export default function SupprimerComptePage() {
     if (!session) return
 
     const res = await fetch(`${API_URL}/api/account/export`, {
-      headers: { Authorization: `Bearer ${session.access_token}` },
+      credentials: 'include',
     })
     if (!res.ok) return
 
@@ -36,8 +36,8 @@ export default function SupprimerComptePage() {
       if (!session) throw new Error('Non connecté')
 
       const res = await fetch(`${API_URL}/api/account`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${session.access_token}` },
+        method:      'DELETE',
+        credentials: 'include',
       })
       if (!res.ok) {
         const err = await res.json()

@@ -58,10 +58,11 @@ function BillingContent() {
     const token = session?.access_token
     const endpoint = payMethod === 'card' ? '/api/billing/checkout' : '/api/billing/cinetpay'
     const body = payMethod === 'card' ? { plan } : { plan, phone }
-    const res = await fetch(`${process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'}${endpoint}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(body),
+    const res = await fetch(endpoint, {
+      method:      'POST',
+      headers:     { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body:        JSON.stringify(body),
     })
     const json = (await res.json()) as { data?: { url?: string } }
     if (json.data?.url) window.location.href = json.data.url

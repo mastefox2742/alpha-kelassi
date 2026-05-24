@@ -14,7 +14,7 @@ interface Flashcard {
   documents: { title: string; subjects: { name: string } | null } | null
 }
 
-const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
+const API_URL = ''  // routes Next.js locales — pas de serveur externe
 
 const QUALITY_LABELS = [
   { q: 0, label: 'Oublié', emoji: '😰', bg: 'bg-red-500 hover:bg-red-600 active:bg-red-700' },
@@ -46,16 +46,10 @@ export default function FlashcardsPage() {
     })
   }, [])
 
-  async function getToken() {
-    const { data: { session } } = await supabase.auth.getSession()
-    return session?.access_token
-  }
-
   async function loadDueCards() {
     setLoading(true)
-    const token = await getToken()
     const res = await fetch(`${API_URL}/api/flashcards/due?limit=20`, {
-      headers: { Authorization: `Bearer ${token}` },
+      credentials: 'include',
     })
     const json = await res.json()
     setDueCards(json.data ?? [])
@@ -72,11 +66,11 @@ export default function FlashcardsPage() {
     if (!currentCard || reviewing) return
     setReviewing(true)
 
-    const token = await getToken()
     await fetch(`${API_URL}/api/flashcards/review`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ flashcard_id: currentCard.id, quality }),
+      method:      'POST',
+      headers:     { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body:        JSON.stringify({ flashcard_id: currentCard.id, quality }),
     })
 
     setStats((s) => ({ reviewed: s.reviewed + 1, correct: s.correct + (quality >= 3 ? 1 : 0) }))

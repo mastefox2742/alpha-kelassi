@@ -1,8 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
-
-const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
+import { computeLevel, BADGES } from '@/lib/xp'
 
 interface DashboardData {
   xp: number
@@ -31,20 +30,71 @@ const LEVEL_GRADIENTS = ['', 'from-gray-400 to-gray-500', 'from-blue-500 to-blue
 
 export default async function ProgressionPage() {
   const supabase = await createClient()
-  const { data: { session } } = await supabase.auth.getSession()
-  if (!session) redirect('/login')
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
 
-  let d: DashboardData | null = null
-  try {
-    const res = await fetch(`${API_URL}/api/progress/dashboard`, {
-      headers: { Authorization: `Bearer ${session.access_token}` },
-      cache: 'no-store',
-    })
-    const json = await res.json()
-    d = json.data
-  } catch {}
+  // Récupère les IDs de sessions pour compter les questions
+  const { data: sessions } = await supabase
+    .from('chat_sessions').select('id').eq('user_id', user.id)
+  const sessionIds = (sessions ?? []).map((s) => s.id)
 
-  if (!d) {
+  const [
+    { data: userRow },
+    { data: badges },
+    { data: progressRows },
+    { data: nextCard },
+    questionsResult,
+    { count: viewsCount },
+  ] = await Promise.all([
+    supabase.from('users').select('xp, full_name, plan').eq('id', user.id).single(),
+    supabase.from('user_badges').select('badge_code, earned_at').eq('user_id', user.id).order('earned_at'),
+    supabase.from('user_progress')
+      .select('subject_id, flashcards_reviewed, score_avg, streak_days, last_active, subjects(name, level)')
+      .eq('user_id', user.id),
+    supabase.from('flashcards')
+      .select('id, front, next_review, documents(title)')
+      .eq('user_id', user.id)
+      .lte('next_review', new Date().toISOString())
+      .order('next_review', { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+    sessionIds.length > 0
+      ? supabase.from('chat_messages')
+          .select('id', { count: 'exact', head: true })
+          .eq('role', 'user')
+          .in('session_id', sessionIds)
+      : Promise.resolve({ count: 0, data: null, error: null }),
+    supabase.from('document_views')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id),
+  ])
+
+  const xp        = userRow?.xp ?? 0
+  const levelInfo = computeLevel(xp)
+  const maxStreak = Math.max(...(progressRows ?? []).map((p) => p.streak_days), 0)
+  const badgesWithMeta = (badges ?? []).map((b) => ({
+    code:      b.badge_code,
+    earned_at: b.earned_at,
+    ...(BADGES[b.badge_code as keyof typeof BADGES] ?? { label: b.badge_code, icon: '🏅', description: '' }),
+  }))
+
+  const d: DashboardData = {
+    xp,
+    level:         levelInfo.level,
+    level_label:   levelInfo.label,
+    next_level_xp: levelInfo.nextXp,
+    streak:        maxStreak,
+    badges:        badgesWithMeta,
+    progress:      (progressRows ?? []) as DashboardData['progress'],
+    next_review:   nextCard as DashboardData['next_review'],
+    stats: {
+      questions_asked:     questionsResult.count ?? 0,
+      documents_viewed:    viewsCount ?? 0,
+      flashcards_reviewed: (progressRows ?? []).reduce((s, p) => s + (p.flashcards_reviewed ?? 0), 0),
+    },
+  }
+
+  if (false) {
     return (
       <div className="max-w-4xl mx-auto px-6 py-8">
         <h1 className="text-3xl font-black text-gray-900 mb-2">Ma progression</h1>

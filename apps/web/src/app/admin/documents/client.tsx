@@ -5,7 +5,7 @@ import { UploadForm } from '../_components/upload-form'
 import { createClient } from '@/lib/supabase/client'
 import type { Level } from '@alpha-kelassi/types'
 
-const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
+const API_URL = ''  // routes Next.js locales
 
 interface Subject { id: string; name: string; level: Level }
 interface Document {
