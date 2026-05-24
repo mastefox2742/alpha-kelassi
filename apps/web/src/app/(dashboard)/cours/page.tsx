@@ -1,6 +1,11 @@
 import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
+import {
+  Calculator, FlaskConical, Leaf, BookOpen, Globe, Brain,
+  Languages, TrendingUp, Monitor, Activity, BookMarked,
+  type LucideIcon,
+} from 'lucide-react'
 
 interface SearchParams { level?: string; subject?: string }
 
@@ -16,19 +21,20 @@ const LEVEL_CONFIG: Record<string, {
 }
 
 /* ── Icônes par matière ──────────────────────────────────────────────────── */
-function subjectIcon(name: string): string {
+function SubjectIcon({ name, className }: { name: string; className?: string }) {
   const n = name.toLowerCase()
-  if (n.includes('math'))                  return '📐'
-  if (n.includes('physique') || n.includes('chimie')) return '⚗️'
-  if (n.includes('svt') || n.includes('biolog') || n.includes('vie')) return '🌿'
-  if (n.includes('français') || n.includes('litt'))  return '✍️'
-  if (n.includes('histoire') || n.includes('géo'))   return '🌍'
-  if (n.includes('philo'))                return '💭'
-  if (n.includes('anglais') || n.includes('langue')) return '🌐'
-  if (n.includes('économ') || n.includes('gestion')) return '💹'
-  if (n.includes('info'))                 return '💻'
-  if (n.includes('sport') || n.includes('eps'))      return '🏃'
-  return '📚'
+  let Icon: LucideIcon = BookMarked
+  if (n.includes('math'))                                              Icon = Calculator
+  else if (n.includes('physique') || n.includes('chimie'))            Icon = FlaskConical
+  else if (n.includes('svt') || n.includes('biolog') || n.includes('vie')) Icon = Leaf
+  else if (n.includes('français') || n.includes('litt'))              Icon = BookOpen
+  else if (n.includes('histoire') || n.includes('géo'))               Icon = Globe
+  else if (n.includes('philo'))                                        Icon = Brain
+  else if (n.includes('anglais') || n.includes('langue'))             Icon = Languages
+  else if (n.includes('économ') || n.includes('gestion'))             Icon = TrendingUp
+  else if (n.includes('info'))                                         Icon = Monitor
+  else if (n.includes('sport') || n.includes('eps'))                  Icon = Activity
+  return <Icon className={className ?? 'w-8 h-8'} strokeWidth={1.5} />
 }
 
 export default async function CoursPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
@@ -77,8 +83,8 @@ export default async function CoursPage({ searchParams }: { searchParams: Promis
 
         {/* Titre */}
         <div className="flex items-center gap-4 mb-8">
-          <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-3xl ${lvl.bg} border-2 ${lvl.border}`}>
-            {subjectIcon(currentSubject.name)}
+          <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${lvl.bg} border-2 ${lvl.border} ${lvl.color}`}>
+            <SubjectIcon name={currentSubject.name} className="w-7 h-7" />
           </div>
           <div>
             <h1 className="text-2xl font-black text-gray-900">{currentSubject.name}</h1>
@@ -278,8 +284,8 @@ function SubjectGrid({
             </div>
 
             {/* Icône centrale */}
-            <div className={`flex-1 flex items-center justify-center py-6 ${cfg.bg}`}>
-              <span className="text-5xl">{subjectIcon(s.name)}</span>
+            <div className={`flex-1 flex items-center justify-center py-6 ${cfg.bg} ${cfg.color}`}>
+              <SubjectIcon name={s.name} className="w-10 h-10" />
             </div>
 
             {/* Nom + compteur */}

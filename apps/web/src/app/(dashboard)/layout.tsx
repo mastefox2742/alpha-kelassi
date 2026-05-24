@@ -3,15 +3,29 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { BetaFeedbackButton } from '@/components/beta-feedback-button'
 import { NotificationBanner } from '@/components/notification-banner'
+import {
+  Home, BookOpen, FileText, Bot, Layers, TrendingUp,
+  Crown, Wrench, type LucideIcon,
+} from 'lucide-react'
 
-const NAV = [
-  { href: '/dashboard', label: 'Accueil', icon: '🏠' },
-  { href: '/cours', label: 'Cours', icon: '📚' },
-  { href: '/examens', label: 'Examens', icon: '📝' },
-  { href: '/tuteur', label: 'Kelassi IA', icon: '🤖' },
-  { href: '/flashcards', label: 'Flashcards', icon: '🃏' },
-  { href: '/progression', label: 'Progression', icon: '📈' },
-  { href: '/billing', label: 'Premium', icon: '⭐' },
+interface NavItem { href: string; label: string; Icon: LucideIcon }
+
+const NAV: NavItem[] = [
+  { href: '/dashboard',  label: 'Accueil',    Icon: Home       },
+  { href: '/cours',      label: 'Cours',       Icon: BookOpen   },
+  { href: '/examens',    label: 'Examens',     Icon: FileText   },
+  { href: '/tuteur',     label: 'Kelassi IA',  Icon: Bot        },
+  { href: '/flashcards', label: 'Flashcards',  Icon: Layers     },
+  { href: '/progression',label: 'Progression', Icon: TrendingUp },
+  { href: '/billing',    label: 'Premium',     Icon: Crown      },
+]
+
+const MOBILE_NAV: NavItem[] = [
+  { href: '/dashboard',   label: 'Accueil', Icon: Home       },
+  { href: '/cours',       label: 'Cours',   Icon: BookOpen   },
+  { href: '/tuteur',      label: 'IA',      Icon: Bot        },
+  { href: '/flashcards',  label: 'Cartes',  Icon: Layers     },
+  { href: '/progression', label: 'Progrès', Icon: TrendingUp },
 ]
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -53,7 +67,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
               href={item.href}
               className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors"
             >
-              <span className="text-base" aria-hidden="true">{item.icon}</span>
+              <item.Icon className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} aria-hidden="true" />
               {item.label}
             </Link>
           ))}
@@ -66,7 +80,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
                 href="/admin"
                 className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-gray-600 hover:bg-gray-100 transition-colors"
               >
-                <span>🛠️</span> Console admin
+                <Wrench className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />
+                Console admin
               </Link>
             </>
           )}
@@ -85,12 +100,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
               <p className="text-xs font-semibold text-gray-900 truncate">
                 {profile?.full_name ?? user.email}
               </p>
-              <span className={`inline-block text-xs px-2 py-0.5 rounded-full mt-0.5 ${
+              <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full mt-0.5 ${
                 profile?.plan === 'premium'
                   ? 'bg-amber-100 text-amber-700'
                   : 'bg-gray-100 text-gray-500'
               }`}>
-                {profile?.plan === 'premium' ? '⭐ Premium' : 'Gratuit'}
+                {profile?.plan === 'premium'
+                  ? <><Crown className="w-3 h-3" /> Premium</>
+                  : 'Gratuit'}
               </span>
             </div>
           </div>
@@ -114,19 +131,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
       {/* Bottom nav mobile */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-100 px-2 py-2 flex items-center justify-around" aria-label="Navigation mobile">
-        {[
-          { href: '/dashboard',  icon: '🏠', label: 'Accueil'  },
-          { href: '/cours',      icon: '📚', label: 'Cours'    },
-          { href: '/tuteur',     icon: '🤖', label: 'IA'       },
-          { href: '/flashcards', icon: '🃏', label: 'Cartes'   },
-          { href: '/progression',icon: '📈', label: 'Progrès'  },
-        ].map((item) => (
+        {MOBILE_NAV.map((item) => (
           <Link
             key={item.href}
             href={item.href}
             className="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
           >
-            <span className="text-xl">{item.icon}</span>
+            <item.Icon className="w-5 h-5" strokeWidth={1.75} aria-hidden="true" />
             <span className="text-[10px] font-semibold">{item.label}</span>
           </Link>
         ))}

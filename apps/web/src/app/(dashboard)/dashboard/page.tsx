@@ -1,12 +1,18 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
+import { BookOpen, FileText, Bot, Layers, Crown, BarChart3, type LucideIcon } from 'lucide-react'
 
-const SHORTCUTS = [
-  { href: '/cours',      label: 'Cours',       icon: '📚', gradient: 'from-blue-500 to-blue-600',    bg: 'bg-blue-50',   text: 'text-blue-700' },
-  { href: '/examens',    label: 'Examens',      icon: '📝', gradient: 'from-violet-500 to-violet-600', bg: 'bg-violet-50', text: 'text-violet-700' },
-  { href: '/tuteur',     label: 'Kelassi IA',   icon: '🤖', gradient: 'from-emerald-500 to-emerald-600', bg: 'bg-emerald-50', text: 'text-emerald-700' },
-  { href: '/flashcards', label: 'Flashcards',   icon: '🃏', gradient: 'from-amber-500 to-orange-500', bg: 'bg-amber-50',  text: 'text-amber-700' },
+interface Shortcut {
+  href: string; label: string; Icon: LucideIcon
+  gradient: string; bg: string; text: string; iconColor: string
+}
+
+const SHORTCUTS: Shortcut[] = [
+  { href: '/cours',      label: 'Cours',      Icon: BookOpen, gradient: 'from-blue-500 to-blue-600',      bg: 'bg-blue-50',    text: 'text-blue-700',    iconColor: 'text-white' },
+  { href: '/examens',    label: 'Examens',    Icon: FileText, gradient: 'from-violet-500 to-violet-600',  bg: 'bg-violet-50',  text: 'text-violet-700',  iconColor: 'text-white' },
+  { href: '/tuteur',     label: 'Kelassi IA', Icon: Bot,      gradient: 'from-emerald-500 to-emerald-600',bg: 'bg-emerald-50', text: 'text-emerald-700', iconColor: 'text-white' },
+  { href: '/flashcards', label: 'Flashcards', Icon: Layers,   gradient: 'from-amber-500 to-orange-500',   bg: 'bg-amber-50',   text: 'text-amber-700',   iconColor: 'text-white' },
 ]
 
 export default async function DashboardPage() {
@@ -42,7 +48,8 @@ export default async function DashboardPage() {
               href="/billing"
               className="inline-flex items-center gap-2 mt-5 bg-white text-blue-700 font-bold text-sm px-5 py-2.5 rounded-xl hover:bg-blue-50 transition-colors"
             >
-              ⭐ Passer Premium — 2 000 FCFA/mois
+              <Crown className="w-4 h-4" />
+              Passer Premium — 2 000 FCFA/mois
             </Link>
           )}
         </div>
@@ -58,8 +65,8 @@ export default async function DashboardPage() {
               href={s.href}
               className={`${s.bg} rounded-2xl p-5 flex flex-col items-center gap-3 hover:scale-105 transition-all duration-200 border border-white shadow-sm group`}
             >
-              <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${s.gradient} flex items-center justify-center text-2xl shadow-md`}>
-                {s.icon}
+              <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${s.gradient} flex items-center justify-center shadow-md`}>
+                <s.Icon className="w-6 h-6 text-white" strokeWidth={1.75} />
               </div>
               <span className={`text-sm font-bold ${s.text}`}>{s.label}</span>
             </Link>
@@ -100,7 +107,9 @@ export default async function DashboardPage() {
             </div>
           ) : (
             <div className="text-center py-8">
-              <p className="text-4xl mb-3">📊</p>
+              <div className="w-12 h-12 bg-gray-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                <BarChart3 className="w-6 h-6 text-gray-400" strokeWidth={1.5} />
+              </div>
               <p className="text-sm text-gray-400">Commence à réviser pour voir<br />ta progression ici.</p>
               <Link href="/cours" className="inline-block mt-4 text-sm font-semibold text-blue-600 hover:underline">
                 Parcourir les cours →
@@ -122,10 +131,13 @@ export default async function DashboardPage() {
                 href={`/cours/${doc.id}`}
                 className="flex items-center gap-4 p-3 rounded-xl hover:bg-gray-50 transition-colors group"
               >
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg flex-shrink-0 ${
-                  doc.type === 'examen' ? 'bg-violet-100' : 'bg-blue-100'
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                  doc.type === 'examen' ? 'bg-violet-100 text-violet-600' : 'bg-blue-100 text-blue-600'
                 }`}>
-                  {doc.type === 'examen' ? '📝' : '📖'}
+                  {doc.type === 'examen'
+                    ? <FileText className="w-5 h-5" strokeWidth={1.5} />
+                    : <BookOpen className="w-5 h-5" strokeWidth={1.5} />
+                  }
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-gray-900 line-clamp-1 group-hover:text-blue-600 transition-colors">
@@ -139,7 +151,9 @@ export default async function DashboardPage() {
               </Link>
             )) : (
               <div className="text-center py-8">
-                <p className="text-4xl mb-3">📭</p>
+                <div className="w-12 h-12 bg-gray-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                  <BookOpen className="w-6 h-6 text-gray-400" strokeWidth={1.5} />
+                </div>
                 <p className="text-sm text-gray-400">Aucun document disponible.</p>
               </div>
             )}
@@ -149,7 +163,9 @@ export default async function DashboardPage() {
 
       {/* ── TIPS CARD ── */}
       <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-100 rounded-2xl p-6 flex items-start gap-4">
-        <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center text-xl flex-shrink-0">💡</div>
+        <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center flex-shrink-0">
+          <Bot className="w-5 h-5 text-emerald-700" strokeWidth={1.5} />
+        </div>
         <div>
           <p className="font-bold text-emerald-900 mb-1">Conseil du jour</p>
           <p className="text-sm text-emerald-700 leading-relaxed">
