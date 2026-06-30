@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server'
+import { adminDb } from '@/lib/firebase/admin'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import {
@@ -39,20 +39,20 @@ function SubjectIcon({ name, className }: { name: string; className?: string }) 
 
 export default async function CoursPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const { level, subject: subjectId } = await searchParams
-  const supabase = await createClient()
 
-  const [{ data: subjects }, { data: documents }] = await Promise.all([
-    supabase.from('subjects').select('id, name, level').order('level').order('name'),
-    supabase
-      .from('documents')
-      .select('id, title, type, level, year, is_premium, pdf_url, subject_id, subjects(id, name, level)')
-      .eq('type', 'cours')
-      .order('created_at', { ascending: false })
-      .limit(200),
+  const [subjectsSnap, docsSnap] = await Promise.all([
+    adminDb.collection('subjects').orderBy('level').orderBy('name').get().catch(() => null),
+    adminDb.collection('documents').where('type', '==', 'cours').orderBy('created_at', 'desc').limit(200).get().catch(() => null),
   ])
 
-  const allSubjects = subjects ?? []
-  const allDocs     = documents ?? []
+  type Subject = { id: string; name: string; level: string }
+  type Doc = { id: string; title: string; type: string; level: string; year: number | null; is_premium: boolean; pdf_url: string | null; subject_id: string; subjects: { id: string; name: string; level: string } | null }
+
+  const allSubjects: Subject[] = subjectsSnap?.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Subject, 'id'>) })) ?? []
+  const allDocs: Doc[] = docsSnap?.docs.map((d) => {
+    const data = d.data()
+    return { id: d.id, ...data, subjects: allSubjects.find((s) => s.id === data.subject_id) ?? null }
+  }) as Doc[] ?? []
 
   /* ── Vue 2 : liste de documents pour une matière ─────────────────────── */
   if (subjectId) {
@@ -60,7 +60,7 @@ export default async function CoursPage({ searchParams }: { searchParams: Promis
     if (!currentSubject) redirect('/cours')
 
     const lvl  = LEVEL_CONFIG[currentSubject.level] ?? LEVEL_CONFIG['bepc']
-    const docs = allDocs.filter((d) => (d.subjects as { id: string } | null)?.id === subjectId)
+    const docs = allDocs.filter((d) => d.subjects?.id === subjectId)
 
     return (
       <div className="max-w-4xl mx-auto px-4 py-8">
@@ -154,7 +154,7 @@ export default async function CoursPage({ searchParams }: { searchParams: Promis
 
   // Compte les docs par matière
   const docsPerSubject = allDocs.reduce<Record<string, number>>((acc, d) => {
-    const sid = (d.subjects as { id: string } | null)?.id
+    const sid = d.subjects?.id ?? d.subject_id
     if (sid) acc[sid] = (acc[sid] ?? 0) + 1
     return acc
   }, {})

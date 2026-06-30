@@ -1,4 +1,5 @@
-import { createClient } from '@/lib/supabase/server'
+import { getServerUser } from '@/lib/supabase/server'
+import { adminDb } from '@/lib/firebase/admin'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { redis } from '@/lib/redis'
@@ -17,39 +18,44 @@ const SHORTCUTS: Shortcut[] = [
 ]
 
 type RecentDoc = { id: string; title: string; type: string; level: string }
+type Progress = { id: string; score_avg: number | null; streak_days: number; subjects: { name: string } | null }
 
-async function getRecentDocs(supabase: Awaited<ReturnType<typeof createClient>>): Promise<RecentDoc[]> {
+async function getRecentDocs(): Promise<RecentDoc[]> {
   const cached = await redis.get<RecentDoc[]>('docs:recent:4')
   if (cached) return cached
-
-  const { data } = await supabase
-    .from('documents')
-    .select('id, title, type, level')
-    .eq('is_premium', false)
-    .order('created_at', { ascending: false })
-    .limit(4)
-
-  const docs = data ?? []
-  await redis.set('docs:recent:4', docs, { ex: 90 }) // 90s TTL
-  return docs
+  try {
+    const snap = await adminDb.collection('documents')
+      .where('is_premium', '==', false)
+      .orderBy('created_at', 'desc')
+      .limit(4)
+      .get()
+    const docs = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecentDoc, 'id'>) }))
+    await redis.set('docs:recent:4', docs, { ex: 90 })
+    return docs
+  } catch {
+    return []
+  }
 }
 
 export default async function DashboardPage() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getServerUser()
+  if (!user) redirect('/login')
 
-  const [{ data: profile }, { data: progress }, recentDocs] = await Promise.all([
-    supabase.from('users').select('full_name, plan, onboarding_completed').eq('id', user!.id).single(),
-    supabase.from('user_progress').select('*, subjects(name)').eq('user_id', user!.id).limit(5),
-    getRecentDocs(supabase),
+  const [profileSnap, progressSnap, recentDocs] = await Promise.all([
+    adminDb.collection('users').doc(user.id).get().catch(() => null),
+    adminDb.collection('user_progress').where('user_id', '==', user.id).limit(5).get().catch(() => null),
+    getRecentDocs(),
   ])
 
+  const profile = profileSnap?.data() ?? null
+  const progress: Progress[] = progressSnap?.docs.map((d) => ({ id: d.id, ...d.data() })) as Progress[] ?? []
+
   // Redirige les nouveaux utilisateurs vers l'onboarding
-  if (profile && !profile.onboarding_completed) redirect('/onboarding')
+  if (profile && !profile['onboarding_completed']) redirect('/onboarding')
 
   const hour = new Date().getHours()
   const greeting = hour < 12 ? 'Bonjour' : hour < 18 ? 'Bon après-midi' : 'Bonsoir'
-  const firstName = profile?.full_name?.split(' ')[0] ?? 'Élève'
+  const firstName = (profile?.['full_name'] as string | undefined)?.split(' ')[0] ?? 'Élève'
 
   return (
     <div className="px-6 py-8 max-w-5xl mx-auto space-y-8">
@@ -62,7 +68,7 @@ export default async function DashboardPage() {
           <p className="text-blue-200 text-sm font-medium mb-1">{greeting} 👋</p>
           <h1 className="text-3xl font-black text-white mb-2">{firstName}</h1>
           <p className="text-blue-100 text-sm max-w-xs">Prêt à réviser aujourd'hui ? Continue là où tu t'es arrêté.</p>
-          {profile?.plan === 'free' && (
+          {profile?.['plan'] !== 'premium' && (
             <Link
               href="/billing"
               className="inline-flex items-center gap-2 mt-5 bg-white text-blue-700 font-bold text-sm px-5 py-2.5 rounded-xl hover:bg-blue-50 transition-colors"
@@ -108,7 +114,7 @@ export default async function DashboardPage() {
                 <div key={p.id}>
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-sm font-medium text-gray-700">
-                      {(p.subjects as { name: string } | null)?.name}
+                      {p.subjects?.name}
                     </span>
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-bold text-orange-500">{p.streak_days}🔥</span>

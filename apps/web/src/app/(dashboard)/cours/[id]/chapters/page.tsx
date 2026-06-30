@@ -1,4 +1,5 @@
-import { createClient } from '@/lib/supabase/server'
+import { getServerUser } from '@/lib/supabase/server'
+import { adminDb } from '@/lib/firebase/admin'
 import { notFound, redirect } from 'next/navigation'
 import Link from 'next/link'
 
@@ -8,30 +9,28 @@ export default async function ChaptersListPage({
   params: Promise<{ id: string }>
 }) {
   const { id } = await params
-  const supabase = await createClient()
-
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getServerUser()
   if (!user) redirect('/login')
 
-  const [{ data: doc }, { data: profile }] = await Promise.all([
-    supabase.from('documents').select('id, title, level, is_premium, type, subjects(name)').eq('id', id).single(),
-    supabase.from('users').select('plan').eq('id', user.id).single(),
+  const [docSnap, profileSnap, chaptersSnap] = await Promise.all([
+    adminDb.collection('documents').doc(id).get(),
+    adminDb.collection('users').doc(user.uid).get(),
+    adminDb.collection('course_chapters')
+      .where('document_id', '==', id)
+      .orderBy('chapter_number', 'asc')
+      .get(),
   ])
 
-  if (!doc) notFound()
+  if (!docSnap.exists) notFound()
 
-  const plan = profile?.plan ?? 'free'
+  const doc  = { id: docSnap.id, ...docSnap.data() } as Record<string, any>
+  const plan = (profileSnap.data()?.plan as string) ?? 'free'
+
   if (doc.is_premium && plan !== 'premium') redirect(`/cours/${id}`)
 
-  const { data: chapters } = await supabase
-    .from('course_chapters')
-    .select('id, chapter_number, title, word_count, status')
-    .eq('document_id', id)
-    .order('chapter_number')
-
-  const doneChapters    = chapters?.filter((c) => c.status === 'done') ?? []
-  const pendingChapters = chapters?.filter((c) => c.status !== 'done') ?? []
-  const subjectName     = (doc.subjects as { name: string } | null)?.name
+  const chapters        = chaptersSnap.docs.map((d) => ({ id: d.id, ...d.data() })) as any[]
+  const doneChapters    = chapters.filter((c) => c.status === 'done')
+  const pendingChapters = chapters.filter((c) => c.status !== 'done')
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-6">
@@ -56,11 +55,6 @@ export default async function ChaptersListPage({
               Fiches de révision
             </h1>
             <p className="text-sm text-gray-500 mt-1 truncate">{doc.title}</p>
-            {subjectName && (
-              <span className="inline-block mt-2 text-xs bg-gray-100 text-gray-600 px-2.5 py-1 rounded-full font-medium">
-                {subjectName}
-              </span>
-            )}
           </div>
           <div className="text-right flex-shrink-0">
             <p className="text-2xl font-black text-violet-700">{doneChapters.length}</p>

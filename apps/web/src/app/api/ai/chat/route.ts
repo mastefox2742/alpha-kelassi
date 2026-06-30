@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
-import { createClient as createAdminClient } from '@supabase/supabase-js'
+import { verifyAuth, adminDb } from '@/lib/firebase/server-auth'
+import { FieldValue } from 'firebase-admin/firestore'
 import { GoogleGenAI } from '@google/genai'
 import { z } from 'zod'
 import { createHash } from 'crypto'
@@ -18,23 +18,12 @@ function getGenai(): GoogleGenAI {
   return _genai
 }
 
-let _admin: ReturnType<typeof createAdminClient> | null = null
-function getAdmin() {
-  if (!_admin) {
-    _admin = createAdminClient(
-      process.env['NEXT_PUBLIC_SUPABASE_URL']!,
-      process.env['SUPABASE_SERVICE_ROLE_KEY']!
-    )
-  }
-  return _admin
-}
-
 // ── Validation ────────────────────────────────────────────────────────────────
 
 const chatSchema = z.object({
   question:       z.string().min(1).max(2000),
-  session_id:     z.string().uuid().nullish().transform((v) => v ?? undefined),
-  document_id:    z.string().uuid().nullish().transform((v) => v ?? undefined),
+  session_id:     z.string().nullish().transform((v) => v ?? undefined),
+  document_id:    z.string().nullish().transform((v) => v ?? undefined),
   revealSolution: z.boolean().optional().default(false),
   image: z.object({
     data:     z.string().min(1),
@@ -135,9 +124,8 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+  const userId = await verifyAuth(req)
+  if (!userId) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
 
   let body: z.infer<typeof chatSchema>
   try {
@@ -146,13 +134,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Corps invalide' }, { status: 400 })
   }
 
-  const { data: profile } = await getAdmin()
-    .from('users').select('plan').eq('id', user.id).single()
-  const plan = profile?.plan ?? 'free'
+  const profileSnap = await adminDb.collection('users').doc(userId).get()
+  const plan        = (profileSnap.data()?.plan as string) ?? 'free'
 
   // ── Quota : mode solution coûte tous les crédits free ──
   const quotaMode = body.revealSolution ? 'solution' : 'socratic'
-  const quota     = await checkAndIncrementQuota(user.id, plan, quotaMode)
+  const quota     = await checkAndIncrementQuota(userId, plan, quotaMode)
 
   if (!quota.allowed) {
     const isSolutionBlock = body.revealSolution && plan !== 'premium'
@@ -175,11 +162,12 @@ export async function POST(req: NextRequest) {
   // Session
   let sessionId = body.session_id
   if (!sessionId) {
-    const { data: session } = await supabase
-      .from('chat_sessions')
-      .insert({ user_id: user.id, document_id: body.document_id ?? null })
-      .select('id').single()
-    sessionId = session!.id
+    const sessionRef = await adminDb.collection('chat_sessions').add({
+      user_id:     userId,
+      document_id: body.document_id ?? null,
+      created_at:  FieldValue.serverTimestamp(),
+    })
+    sessionId = sessionRef.id
   }
 
   // Cache Redis — clé distincte pour solutions vs socratique
@@ -187,7 +175,7 @@ export async function POST(req: NextRequest) {
   const cacheKey    = `${cachePrefix}:${createHash('sha256').update(question.toLowerCase()).digest('hex')}`
   const cached      = await redis.get<string>(cacheKey)
   if (cached) {
-    saveChatMessages(getAdmin(), sessionId, question, cached).catch(() => {})
+    saveChatMessages(sessionId, question, cached).catch(() => {})
     return new Response(cached, {
       headers: {
         'Content-Type':      'text/event-stream',
@@ -203,9 +191,8 @@ export async function POST(req: NextRequest) {
   // Document context
   let documentTitle: string | null = null
   if (body.document_id) {
-    const { data: doc } = await getAdmin()
-      .from('documents').select('title').eq('id', body.document_id).single()
-    documentTitle = doc?.title ?? null
+    const docSnap = await adminDb.collection('documents').doc(body.document_id).get()
+    documentTitle = docSnap.data()?.title ?? null
   }
 
   // RAG — seuil plus bas en mode solution (on veut le maximum de contexte)
@@ -216,16 +203,19 @@ export async function POST(req: NextRequest) {
   })
 
   // Historique
-  const { data: history } = await supabase
-    .from('chat_messages')
-    .select('role, content')
-    .eq('session_id', sessionId)
-    .order('created_at', { ascending: false })
+  const historySnap = await adminDb
+    .collection('chat_messages')
+    .where('session_id', '==', sessionId)
+    .orderBy('created_at', 'desc')
     .limit(10)
+    .get()
 
-  const historyText = (history ?? [])
+  const historyText = historySnap.docs
     .reverse()
-    .map((m) => `${m.role === 'user' ? 'Élève' : 'Kelassi'}: ${m.content}`)
+    .map((d) => {
+      const m = d.data()
+      return `${m.role === 'user' ? 'Élève' : 'Kelassi'}: ${m.content}`
+    })
     .join('\n')
 
   const contextText = chunks.length > 0
@@ -257,7 +247,6 @@ export async function POST(req: NextRequest) {
     model:    'gemini-2.5-flash',
     config:   {
       systemInstruction: systemPrompt,
-      // Solution : alloue du budget de réflexion pour une correction de qualité
       thinkingConfig: { thinkingBudget: body.revealSolution ? 2048 : 0 },
     },
     contents: [{ role: 'user', parts }],
@@ -291,8 +280,7 @@ export async function POST(req: NextRequest) {
         controller.close()
 
         Promise.all([
-          saveChatMessages(getAdmin(), sessionId!, question, fullResponse),
-          // Cache 24h pour solutions (contenu stable), 1h pour socratique
+          saveChatMessages(sessionId!, question, fullResponse),
           redis.set(cacheKey, fullResponse, { ex: body.revealSolution ? 86400 : 3600 }),
         ]).catch(console.error)
       } catch (err) {
@@ -319,10 +307,11 @@ export async function POST(req: NextRequest) {
   })
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function saveChatMessages(supabase: any, sessionId: string, question: string, answer: string) {
-  await supabase.from('chat_messages').insert([
-    { session_id: sessionId, role: 'user',      content: question },
-    { session_id: sessionId, role: 'assistant', content: answer   },
-  ])
+async function saveChatMessages(sessionId: string, question: string, answer: string) {
+  const batch = adminDb.batch()
+  const userRef      = adminDb.collection('chat_messages').doc()
+  const assistantRef = adminDb.collection('chat_messages').doc()
+  batch.set(userRef,      { session_id: sessionId, role: 'user',      content: question, created_at: FieldValue.serverTimestamp() })
+  batch.set(assistantRef, { session_id: sessionId, role: 'assistant', content: answer,   created_at: FieldValue.serverTimestamp() })
+  await batch.commit()
 }

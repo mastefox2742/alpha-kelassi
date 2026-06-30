@@ -19,11 +19,19 @@ const nextConfig: NextConfig = {
   },
 
   // pdfjs-dist et mammoth sont des libs Node.js — ne pas bundler avec webpack
-  serverExternalPackages: ['pdfjs-dist', 'mammoth', 'canvas'],
+  serverExternalPackages: ['pdfjs-dist', 'mammoth', 'canvas', 'firebase-admin', '@google-cloud/firestore', '@firebase/app', 'google-gax'],
 
   // Réduit le JS importé pour les libs lourdes
   experimental: {
-    optimizePackageImports: ['recharts', 'react-pdf', 'lucide-react'],
+    optimizePackageImports: [
+      'recharts',
+      'react-pdf',
+      'lucide-react',
+      'react-markdown',
+      'rehype-katex',
+      'remark-math',
+      'zod',
+    ],
   },
 
   webpack(config) {

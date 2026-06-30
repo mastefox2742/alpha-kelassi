@@ -1,9 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { auth } from '@/lib/firebase/client'
+import { getIdToken } from 'firebase/auth'
 
-const API_URL = ''  // routes Next.js locales
+const API_URL = ''
 
 const TYPE_CONFIG = {
   annonce: { label: 'Annonce', color: 'bg-blue-100 text-blue-700', emoji: '📢' },
@@ -21,8 +22,9 @@ interface Notif {
 const EMPTY = { type: 'annonce' as const, title: '', message: '', cta_label: '', cta_url: '', is_active: true, target_plan: 'all', expires_at: '' }
 
 async function getToken() {
-  const { data: { session } } = await createClient().auth.getSession()
-  return session?.access_token ?? ''
+  const user = auth.currentUser
+  if (!user) return ''
+  try { return await getIdToken(user) } catch { return '' }
 }
 
 export default function AdminNotificationsPage() {

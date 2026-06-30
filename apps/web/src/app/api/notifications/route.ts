@@ -1,30 +1,41 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
-
-// Client admin pour une lecture publique sans cookie
-let _admin: ReturnType<typeof createClient> | null = null
-function getAdmin() {
-  if (!_admin) {
-    _admin = createClient(
-      process.env['NEXT_PUBLIC_SUPABASE_URL']!,
-      process.env['SUPABASE_SERVICE_ROLE_KEY']!
-    )
-  }
-  return _admin
-}
+import { adminDb } from '@/lib/firebase/admin'
 
 /** GET /api/notifications?plan=free — notifs actives affichées dans le dashboard */
 export async function GET(req: NextRequest) {
   const plan = req.nextUrl.searchParams.get('plan') ?? 'free'
+  const now  = new Date().toISOString()
 
-  const { data } = await getAdmin()
-    .from('notifications')
-    .select('id, type, title, message, cta_label, cta_url')
-    .eq('is_active', true)
-    .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
-    .or(`target_plan.eq.all,target_plan.eq.${plan}`)
-    .order('created_at', { ascending: false })
-    .limit(5)
+  try {
+    // Notifications actives, non expirées, pour ce plan ou pour tous
+    const snap = await adminDb
+      .collection('notifications')
+      .where('is_active', '==', true)
+      .orderBy('created_at', 'desc')
+      .limit(20)
+      .get()
 
-  return NextResponse.json({ data: data ?? [] })
+    const allNotifs = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as any[]
+
+    // Filtre en mémoire (Firestore ne supporte pas OR multi-champs facilement)
+    const data = allNotifs
+      .filter((n) => {
+        const notExpired = !n.expires_at || n.expires_at > now
+        const matchesPlan = n.target_plan === 'all' || n.target_plan === plan
+        return notExpired && matchesPlan
+      })
+      .slice(0, 5)
+      .map((n) => ({
+        id:        n.id,
+        type:      n.type,
+        title:     n.title,
+        message:   n.message,
+        cta_label: n.cta_label ?? null,
+        cta_url:   n.cta_url ?? null,
+      }))
+
+    return NextResponse.json({ data })
+  } catch {
+    return NextResponse.json({ data: [] })
+  }
 }

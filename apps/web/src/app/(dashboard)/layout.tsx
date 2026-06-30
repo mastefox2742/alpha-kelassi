@@ -1,4 +1,5 @@
-import { createClient } from '@/lib/supabase/server'
+import { getServerUser } from '@/lib/supabase/server'
+import { adminDb } from '@/lib/firebase/admin'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { BetaFeedbackButton } from '@/components/beta-feedback-button'
@@ -31,27 +32,28 @@ const MOBILE_NAV: NavItem[] = [
 
 type UserProfile = { full_name: string | null; plan: string | null; role: string | null }
 
-async function getCachedProfile(userId: string, supabase: Awaited<ReturnType<typeof createClient>>): Promise<UserProfile | null> {
+async function getCachedProfile(userId: string): Promise<UserProfile | null> {
   const cacheKey = `profile:${userId}`
   const cached = await redis.get<UserProfile>(cacheKey)
   if (cached) return cached
 
-  const { data } = await supabase
-    .from('users')
-    .select('full_name, plan, role')
-    .eq('id', userId)
-    .single()
-
-  if (data) await redis.set(cacheKey, data, { ex: 300 }) // 5 min TTL
-  return data
+  try {
+    const snap = await adminDb.collection('users').doc(userId).get()
+    if (!snap.exists) return null
+    const d = snap.data()!
+    const profile: UserProfile = { full_name: d.full_name ?? null, plan: d.plan ?? 'free', role: d.role ?? 'student' }
+    await redis.set(cacheKey, profile, { ex: 300 })
+    return profile
+  } catch {
+    return null
+  }
 }
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getServerUser()
   if (!user) redirect('/login')
 
-  const profile = await getCachedProfile(user.id, supabase)
+  const profile = await getCachedProfile(user.id)
 
   return (
     <div className="min-h-screen flex">
@@ -107,12 +109,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
           <div className="flex items-center gap-3 px-2">
             <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
               <span className="text-blue-600 font-bold text-sm">
-                {(profile?.full_name ?? user.email ?? 'U')[0].toUpperCase()}
+                {(profile?.full_name ?? 'U')[0].toUpperCase()}
               </span>
             </div>
             <div className="min-w-0">
               <p className="text-xs font-semibold text-gray-900 truncate">
-                {profile?.full_name ?? user.email}
+                {profile?.full_name ?? 'Élève'}
               </p>
               <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full mt-0.5 ${
                 profile?.plan === 'premium'

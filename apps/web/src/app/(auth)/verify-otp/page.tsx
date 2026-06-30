@@ -1,11 +1,10 @@
 'use client'
 
 import { useState, Suspense } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { verifyPhoneOtp } from '@/lib/firebase/auth'
 import { useRouter, useSearchParams } from 'next/navigation'
 
 function VerifyOTPForm() {
-  const supabase = createClient()
   const router = useRouter()
   const searchParams = useSearchParams()
   const phone = searchParams.get('phone') ?? ''
@@ -18,21 +17,14 @@ function VerifyOTPForm() {
     e.preventDefault()
     setLoading(true)
     setError(null)
-
-    const formattedPhone = phone.startsWith('+') ? phone : `+242${phone}`
-
-    const { error } = await supabase.auth.verifyOtp({
-      phone: formattedPhone,
-      token: otp,
-      type: 'sms',
-    })
-
-    if (error) {
-      setError('Code invalide ou expiré. Réessaie.')
-    } else {
+    try {
+      await verifyPhoneOtp(otp)
       router.push('/dashboard')
+    } catch {
+      setError('Code invalide ou expiré. Réessaie.')
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   return (

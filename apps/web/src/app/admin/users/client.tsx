@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { getIdToken } from '@/lib/firebase/auth'
 
 interface User {
   id: string; full_name: string | null; email: string | null
@@ -23,8 +23,12 @@ export function AdminUsersClient({ users: initial }: { users: User[] }) {
 
   async function updateUser(id: string, patch: { plan?: string; role?: string }) {
     setUpdating(id)
-    const supabase = createClient()
-    await supabase.from('users').update(patch).eq('id', id)
+    const token = await getIdToken()
+    await fetch(`/api/admin/users/${id}`, {
+      method:  'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body:    JSON.stringify(patch),
+    })
     setUsers((prev) => prev.map((u) => u.id === id ? { ...u, ...patch } : u))
     setUpdating(null)
   }

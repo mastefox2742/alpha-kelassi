@@ -1,48 +1,29 @@
-import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 const PUBLIC_ROUTES = ['/', '/login', '/register', '/forgot-password', '/verify-otp']
 const AUTH_ROUTES = ['/login', '/register']
 
 export async function middleware(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({ request })
-
-  const supabase = createServerClient(
-    process.env['NEXT_PUBLIC_SUPABASE_URL']!,
-    process.env['NEXT_PUBLIC_SUPABASE_ANON_KEY']!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
-        setAll(cookiesToSet: { name: string; value: string; options: CookieOptions }[]) {
-          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
-          supabaseResponse = NextResponse.next({ request })
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          )
-        },
-      },
-    }
-  )
-
-  const { data: { user } } = await supabase.auth.getUser()
   const pathname = request.nextUrl.pathname
 
+  // Lit le cookie firebase-token posé par /api/auth/set-token
+  const token = request.cookies.get('firebase-token')?.value
+  const isAuthenticated = Boolean(token)
+
   // Redirige vers /dashboard si déjà connecté et sur une page auth
-  if (user && AUTH_ROUTES.some((r) => pathname.startsWith(r))) {
+  if (isAuthenticated && AUTH_ROUTES.some((r) => pathname.startsWith(r))) {
     return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 
   // Redirige vers /login si non connecté et sur une page protégée
-  // Les routes /api/ gèrent leur propre authentification (pas de redirect)
+  // Les routes /api/ gèrent leur propre auth (pas de redirect middleware)
   const isPublic = PUBLIC_ROUTES.some((r) => pathname === r || pathname.startsWith('/auth'))
     || pathname.startsWith('/api/')
-  if (!user && !isPublic) {
+  if (!isAuthenticated && !isPublic) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  return supabaseResponse
+  return NextResponse.next()
 }
 
 export const config = {

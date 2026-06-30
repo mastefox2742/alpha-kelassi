@@ -2,7 +2,7 @@
 
 import { useState, useRef } from 'react'
 import { UploadForm } from '../_components/upload-form'
-import { createClient } from '@/lib/supabase/client'
+import { getIdToken } from '@/lib/firebase/auth'
 import type { Level } from '@alpha-kelassi/types'
 
 const API_URL = ''  // routes Next.js locales
@@ -16,8 +16,7 @@ interface Document {
 }
 
 async function getToken() {
-  const { data: { session } } = await createClient().auth.getSession()
-  return session?.access_token ?? ''
+  return (await getIdToken()) ?? ''
 }
 
 export function AdminDocumentsClient({ subjects, documents: initial }: { subjects: Subject[]; documents: Document[] }) {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { verifyAuth, adminDb } from '@/lib/firebase/server-auth'
+import { FieldValue } from 'firebase-admin/firestore'
 import { GoogleGenAI } from '@google/genai'
 import { z } from 'zod'
 
@@ -12,15 +13,14 @@ function getGenai() {
 }
 
 const schema = z.object({
-  document_id: z.string().uuid(),
+  document_id: z.string().min(1),
   count:       z.number().int().min(1).max(20).default(10),
 })
 
 /** POST /api/flashcards/generate — génère des flashcards IA depuis un document */
 export async function POST(req: NextRequest) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+  const userId = await verifyAuth(req)
+  if (!userId) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
 
   let body: z.infer<typeof schema>
   try { body = schema.parse(await req.json()) }
@@ -29,21 +29,21 @@ export async function POST(req: NextRequest) {
   const { document_id, count } = body
 
   // Récupère les chunks du document
-  const { data: chunks } = await supabase
-    .from('document_chunks')
-    .select('content')
-    .eq('document_id', document_id)
-    .order('chunk_index', { ascending: true })
+  const chunksSnap = await adminDb
+    .collection('document_chunks')
+    .where('document_id', '==', document_id)
+    .orderBy('chunk_index', 'asc')
     .limit(30)
+    .get()
 
-  if (!chunks || chunks.length === 0) {
+  if (chunksSnap.empty) {
     return NextResponse.json(
       { error: { code: 'NOT_INDEXED', message: 'Ce document n\'est pas encore indexé. Réessaie dans quelques minutes.' } },
       { status: 422 }
     )
   }
 
-  const context = chunks.map((c) => c.content).join('\n\n---\n\n').slice(0, 8000)
+  const context = chunksSnap.docs.map((d) => d.data().content as string).join('\n\n---\n\n').slice(0, 8000)
 
   const prompt = `Tu es un expert pédagogique. À partir du contenu de cours ci-dessous, génère exactement ${count} flashcards pour aider un élève congolais à réviser.
 
@@ -78,18 +78,31 @@ ${context}`
     )
   }
 
-  const rows = cards.slice(0, count).map((card) => ({
-    user_id:     user.id,
-    document_id,
-    front:       card.front,
-    back:        card.back,
-  }))
+  const batch = adminDb.batch()
+  const refs: FirebaseFirestore.DocumentReference[] = []
 
-  const { data: inserted, error: dbError } = await supabase
-    .from('flashcards')
-    .insert(rows)
-    .select()
+  cards.slice(0, count).forEach((card) => {
+    const ref = adminDb.collection('flashcards').doc()
+    refs.push(ref)
+    batch.set(ref, {
+      user_id:     userId,
+      document_id,
+      front:       card.front,
+      back:        card.back,
+      ease_factor: 2.5,
+      interval:    0,
+      reps:        0,
+      next_review: new Date().toISOString(),
+      created_at:  FieldValue.serverTimestamp(),
+    })
+  })
 
-  if (dbError) return NextResponse.json({ error: { code: 'DB_ERROR', message: dbError.message } }, { status: 500 })
-  return NextResponse.json({ data: inserted, count: inserted?.length ?? 0 }, { status: 201 })
+  try {
+    await batch.commit()
+  } catch (err) {
+    return NextResponse.json({ error: { code: 'DB_ERROR', message: (err as Error).message } }, { status: 500 })
+  }
+
+  const inserted = refs.map((ref, i) => ({ id: ref.id, ...cards[i] }))
+  return NextResponse.json({ data: inserted, count: inserted.length }, { status: 201 })
 }

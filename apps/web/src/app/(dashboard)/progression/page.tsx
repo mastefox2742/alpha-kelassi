@@ -1,4 +1,5 @@
-import { createClient } from '@/lib/supabase/server'
+import { getServerUser } from '@/lib/supabase/server'
+import { adminDb } from '@/lib/firebase/admin'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { computeLevel, BADGES } from '@/lib/xp'
@@ -29,53 +30,63 @@ function levelFloor(level: number): number {
 const LEVEL_GRADIENTS = ['', 'from-gray-400 to-gray-500', 'from-blue-500 to-blue-600', 'from-purple-500 to-purple-600', 'from-orange-500 to-orange-600', 'from-yellow-400 to-yellow-500']
 
 export default async function ProgressionPage() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getServerUser()
   if (!user) redirect('/login')
 
-  // Récupère les IDs de sessions pour compter les questions
-  const { data: sessions } = await supabase
-    .from('chat_sessions').select('id').eq('user_id', user.id)
-  const sessionIds = (sessions ?? []).map((s) => s.id)
+  const userId = user.uid
+
+  // Sessions pour compter les questions
+  const sessionsSnap = await adminDb
+    .collection('chat_sessions')
+    .where('user_id', '==', userId)
+    .get()
+  const sessionIds = sessionsSnap.docs.map((d) => d.id)
 
   const [
-    { data: userRow },
-    { data: badges },
-    { data: progressRows },
-    { data: nextCard },
-    questionsResult,
-    { count: viewsCount },
+    userSnap,
+    badgesSnap,
+    progressSnap,
+    nextCardSnap,
   ] = await Promise.all([
-    supabase.from('users').select('xp, full_name, plan').eq('id', user.id).single(),
-    supabase.from('user_badges').select('badge_code, earned_at').eq('user_id', user.id).order('earned_at'),
-    supabase.from('user_progress')
-      .select('subject_id, flashcards_reviewed, score_avg, streak_days, last_active, subjects(name, level)')
-      .eq('user_id', user.id),
-    supabase.from('flashcards')
-      .select('id, front, next_review, documents(title)')
-      .eq('user_id', user.id)
-      .lte('next_review', new Date().toISOString())
-      .order('next_review', { ascending: true })
+    adminDb.collection('users').doc(userId).get(),
+    adminDb.collection('user_badges').where('user_id', '==', userId).orderBy('earned_at').get(),
+    adminDb.collection('user_progress').where('user_id', '==', userId).get(),
+    adminDb.collection('flashcards')
+      .where('user_id', '==', userId)
+      .where('next_review', '<=', new Date().toISOString())
+      .orderBy('next_review', 'asc')
       .limit(1)
-      .maybeSingle(),
-    sessionIds.length > 0
-      ? supabase.from('chat_messages')
-          .select('id', { count: 'exact', head: true })
-          .eq('role', 'user')
-          .in('session_id', sessionIds)
-      : Promise.resolve({ count: 0, data: null, error: null }),
-    supabase.from('document_views')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', user.id),
+      .get(),
   ])
 
-  const xp        = userRow?.xp ?? 0
+  const userRow      = userSnap.data()
+  const badges       = badgesSnap.docs.map((d) => d.data())
+  const progressRows = progressSnap.docs.map((d) => d.data())
+  const nextCard     = nextCardSnap.empty ? null : { id: nextCardSnap.docs[0].id, ...nextCardSnap.docs[0].data() }
+
+  // Compte les questions posées
+  let questionsCount = 0
+  for (let i = 0; i < sessionIds.length; i += 30) {
+    const chunk = sessionIds.slice(i, i + 30)
+    if (chunk.length === 0) break
+    const snap  = await adminDb
+      .collection('chat_messages')
+      .where('session_id', 'in', chunk)
+      .where('role', '==', 'user')
+      .get()
+    questionsCount += snap.size
+  }
+
+  const viewsSnap  = await adminDb.collection('document_views').where('user_id', '==', userId).get()
+  const viewsCount = viewsSnap.size
+
+  const xp        = (userRow?.xp as number) ?? 0
   const levelInfo = computeLevel(xp)
-  const maxStreak = Math.max(...(progressRows ?? []).map((p) => p.streak_days), 0)
-  const badgesWithMeta = (badges ?? []).map((b) => ({
-    code:      b.badge_code,
-    earned_at: b.earned_at,
-    ...(BADGES[b.badge_code as keyof typeof BADGES] ?? { label: b.badge_code, icon: '🏅', description: '' }),
+  const maxStreak = Math.max(...progressRows.map((p) => (p.streak_days as number) ?? 0), 0)
+  const badgesWithMeta = badges.map((b) => ({
+    code:      b.badge_code as string,
+    earned_at: b.earned_at as string,
+    ...(BADGES[b.badge_code as keyof typeof BADGES] ?? { label: b.badge_code as string, icon: '🏅', description: '' }),
   }))
 
   const d: DashboardData = {
@@ -85,27 +96,13 @@ export default async function ProgressionPage() {
     next_level_xp: levelInfo.nextXp,
     streak:        maxStreak,
     badges:        badgesWithMeta,
-    progress:      (progressRows ?? []) as DashboardData['progress'],
+    progress:      progressRows as DashboardData['progress'],
     next_review:   nextCard as DashboardData['next_review'],
     stats: {
-      questions_asked:     questionsResult.count ?? 0,
-      documents_viewed:    viewsCount ?? 0,
-      flashcards_reviewed: (progressRows ?? []).reduce((s, p) => s + (p.flashcards_reviewed ?? 0), 0),
+      questions_asked:     questionsCount,
+      documents_viewed:    viewsCount,
+      flashcards_reviewed: progressRows.reduce((s, p) => s + ((p.flashcards_reviewed as number) ?? 0), 0),
     },
-  }
-
-  if (false) {
-    return (
-      <div className="max-w-4xl mx-auto px-6 py-8">
-        <h1 className="text-3xl font-black text-gray-900 mb-2">Ma progression</h1>
-        <div className="bg-amber-50 border border-amber-100 rounded-2xl p-6 text-center">
-          <p className="text-amber-700">Commence à réviser pour voir ta progression ici !</p>
-          <Link href="/cours" className="inline-block mt-4 text-sm font-semibold text-amber-700 hover:underline">
-            Parcourir les cours →
-          </Link>
-        </div>
-      </div>
-    )
   }
 
   const xpInLevel = d.next_level_xp === Infinity
@@ -184,10 +181,7 @@ export default async function ProgressionPage() {
           <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center text-2xl flex-shrink-0">⏰</div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-bold text-amber-800">Flashcard à réviser maintenant</p>
-            <p className="text-sm text-amber-700 truncate mt-0.5">{d.next_review.front}</p>
-            {d.next_review.documents && (
-              <p className="text-xs text-amber-500 mt-0.5">{d.next_review.documents.title}</p>
-            )}
+            <p className="text-sm text-amber-700 truncate mt-0.5">{(d.next_review as any).front}</p>
           </div>
           <Link
             href="/flashcards"

@@ -1,21 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
-import { createClient as createAdminClient } from '@supabase/supabase-js'
+import { verifyAuth, adminDb } from '@/lib/firebase/server-auth'
+import { adminStorage } from '@/lib/firebase/admin'
+import { FieldValue } from 'firebase-admin/firestore'
 import { z } from 'zod'
 
 export const maxDuration = 60 // secondes — extraction PDF peut être lente
-
-// Client admin (bypass RLS)
-const supabaseAdmin = createAdminClient(
-  process.env['NEXT_PUBLIC_SUPABASE_URL']!,
-  process.env['SUPABASE_SERVICE_ROLE_KEY']!
-)
 
 const saveSchema = z.object({
   storagePath: z.string().min(1),
   bucket: z.enum(['pdfs-premium', 'pdfs-public']),
   meta: z.object({
-    subject_id: z.string().uuid(),
+    subject_id: z.string().min(1),
     type: z.enum(['cours', 'examen']),
     title: z.string().min(3),
     level: z.enum(['bepc', 'bac_a', 'bac_c', 'bac_d']),
@@ -37,11 +32,6 @@ function detectFormat(filename: string): 'pdf' | 'docx' | 'txt' | null {
 async function extractText(buffer: Buffer, format: 'pdf' | 'docx' | 'txt'): Promise<string> {
   if (format === 'txt') return buffer.toString('utf-8')
   if (format === 'pdf') {
-    // pdfjs-dist v4 est ESM-only : on ne peut pas utiliser require.resolve()
-    // sur les fichiers .mjs (webpack essaie de les bundler et échoue).
-    // Solution : createRequire() depuis le module Node.js natif 'module'
-    // crée une fonction require dynamique que webpack n'analyse PAS statiquement.
-    // Au runtime, Node.js résout correctement le chemin absolu du worker .mjs.
     const pdfjs = await import('pdfjs-dist')
     const { createRequire } = await import('module')
     const _require = createRequire(process.cwd() + '/package.json')
@@ -59,9 +49,9 @@ async function extractText(buffer: Buffer, format: 'pdf' | 'docx' | 'txt'): Prom
 
     const pages: string[] = []
     for (let i = 1; i <= doc.numPages; i++) {
-      const page = await doc.getPage(i)
+      const page    = await doc.getPage(i)
       const content = await page.getTextContent()
-      const text = content.items
+      const text    = content.items
         .map((item) => ('str' in item ? (item as { str: string }).str : ''))
         .join(' ')
       pages.push(text)
@@ -71,7 +61,7 @@ async function extractText(buffer: Buffer, format: 'pdf' | 'docx' | 'txt'): Prom
   }
   if (format === 'docx') {
     const mammoth = await import('mammoth')
-    const result = await mammoth.extractRawText({ buffer })
+    const result  = await mammoth.extractRawText({ buffer })
     return result.value
   }
   return ''
@@ -88,17 +78,12 @@ function cleanText(raw: string): string {
 
 export async function POST(req: NextRequest) {
   // Auth
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+  const userId = await verifyAuth(req)
+  if (!userId) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
 
   // Vérif admin
-  const { data: profile } = await supabaseAdmin
-    .from('users')
-    .select('role')
-    .eq('id', user.id)
-    .single()
-  if (profile?.role !== 'admin') {
+  const profileSnap = await adminDb.collection('users').doc(userId).get()
+  if (profileSnap.data()?.role !== 'admin') {
     return NextResponse.json({ error: 'Admin requis' }, { status: 403 })
   }
 
@@ -113,17 +98,17 @@ export async function POST(req: NextRequest) {
 
   const { storagePath, bucket, meta } = body
 
-  // Télécharge le fichier depuis Supabase Storage pour extraire le texte
-  const { data: fileData, error: downloadError } = await supabaseAdmin.storage
-    .from(bucket)
-    .download(storagePath)
+  // Télécharge le fichier depuis Firebase Storage pour extraire le texte
+  const bucket_ref = adminStorage.bucket(bucket)
+  const file       = bucket_ref.file(storagePath)
 
-  if (downloadError || !fileData) {
-    return NextResponse.json({ error: `Fichier introuvable en storage : ${downloadError?.message}` }, { status: 404 })
+  let buffer: Buffer
+  try {
+    const [contents] = await file.download()
+    buffer = contents
+  } catch {
+    return NextResponse.json({ error: `Fichier introuvable en storage : ${storagePath}` }, { status: 404 })
   }
-
-  const arrayBuffer = await fileData.arrayBuffer()
-  const buffer = Buffer.from(arrayBuffer)
 
   const format = detectFormat(storagePath)
   if (!format) {
@@ -142,27 +127,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Erreur extraction : ${(err as Error).message}` }, { status: 422 })
   }
 
-  // URL publique
-  const { data: { publicUrl } } = supabaseAdmin.storage.from(bucket).getPublicUrl(storagePath)
+  // URL publique Firebase Storage
+  const publicUrl = `https://storage.googleapis.com/${bucket}/${storagePath}`
 
-  // Insert en base
-  const { data: doc, error: dbError } = await supabaseAdmin
-    .from('documents')
-    .insert({
+  // Insert en Firestore
+  try {
+    const docRef = await adminDb.collection('documents').add({
       ...meta,
-      year: meta.year ?? null,
-      session: meta.session ?? null,
-      pdf_url: publicUrl,
+      year:         meta.year ?? null,
+      session:      meta.session ?? null,
+      pdf_url:      publicUrl,
       text_content: textContent,
+      created_at:   FieldValue.serverTimestamp(),
     })
-    .select()
-    .single()
 
-  if (dbError) {
-    return NextResponse.json({ error: dbError.message }, { status: 500 })
+    const docSnap = await docRef.get()
+    const docData = docSnap.data() as Record<string, unknown>
+    // On ne renvoie pas text_content
+    const { text_content: _, ...docSafe } = docData
+    return NextResponse.json({ data: { id: docRef.id, ...docSafe } }, { status: 201 })
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 })
   }
-
-  // On ne renvoie pas text_content (peut contenir des séquences Unicode invalides)
-  const { text_content: _, ...docSafe } = doc as Record<string, unknown>
-  return NextResponse.json({ data: docSafe }, { status: 201 })
 }

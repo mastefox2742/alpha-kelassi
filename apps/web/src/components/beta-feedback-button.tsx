@@ -1,9 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
-
-const API_URL = ''  // routes Next.js locales
+import { getIdToken } from '@/lib/firebase/auth'
 
 export function BetaFeedbackButton() {
   const [open, setOpen] = useState(false)
@@ -11,17 +9,15 @@ export function BetaFeedbackButton() {
   const [comment, setComment] = useState('')
   const [submitted, setSubmitted] = useState(false)
   const [loading, setLoading] = useState(false)
-  const supabase = createClient()
 
   async function handleSubmit() {
     if (rating === 0) return
     setLoading(true)
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      await fetch(`${API_URL}/api/feedback`, {
+      const token = await getIdToken()
+      await fetch(`/api/feedback`, {
         method:      'POST',
-        headers:     { 'Content-Type': 'application/json' },
-        credentials: 'include',
+        headers:     { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({
           rating,
           comment: comment.trim() || undefined,

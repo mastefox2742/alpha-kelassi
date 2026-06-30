@@ -1,14 +1,13 @@
 'use client'
 
 import React, { useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { signInWithEmail, signInWithGoogle, sendPhoneOtp } from '@/lib/firebase/auth'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 
 type Tab = 'email' | 'phone'
 
 export default function LoginPage(): React.JSX.Element {
-  const supabase = createClient()
   const router = useRouter()
   const [tab, setTab] = useState<Tab>('email')
   const [email, setEmail] = useState('')
@@ -22,33 +21,49 @@ export default function LoginPage(): React.JSX.Element {
     e.preventDefault()
     setLoading(true)
     setError(null)
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) setError(error.message)
-    else router.push('/dashboard')
-    setLoading(false)
+    try {
+      await signInWithEmail(email, password)
+      router.push('/dashboard')
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Erreur de connexion'
+      setError(msg.includes('user-not-found') || msg.includes('wrong-password') || msg.includes('invalid-credential')
+        ? 'Email ou mot de passe incorrect.' : msg)
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function handleGoogleLogin() {
-    await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: `${location.origin}/auth/callback` },
-    })
+    setLoading(true)
+    setError(null)
+    try {
+      await signInWithGoogle()
+      router.push('/dashboard')
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : ''
+      if (!msg.includes('cancelled') && !msg.includes('popup-closed')) setError('Connexion Google échouée.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function handlePhoneLogin(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
     setError(null)
-    const { error } = await supabase.auth.signInWithOtp({
-      phone: phone.startsWith('+') ? phone : `+242${phone}`,
-    })
-    if (error) setError(error.message)
-    else router.push(`/verify-otp?phone=${encodeURIComponent(phone)}`)
-    setLoading(false)
+    try {
+      await sendPhoneOtp(phone, 'recaptcha-container')
+      router.push(`/verify-otp?phone=${encodeURIComponent(phone)}`)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Envoi SMS échoué.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-violet-50 px-4 py-10">
+      <div id="recaptcha-container" />
       <div className="w-full max-w-md">
 
         {/* Logo */}

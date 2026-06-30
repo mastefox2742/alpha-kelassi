@@ -1,14 +1,22 @@
-import { createClient } from '@/lib/supabase/server'
+import { getServerUser } from '@/lib/supabase/server'
+import { adminDb } from '@/lib/firebase/admin'
+import { redirect } from 'next/navigation'
 import { AdminUsersClient } from './client'
 
 export default async function AdminUsersPage() {
-  const supabase = await createClient()
+  const user = await getServerUser()
+  if (!user) redirect('/login')
 
-  const { data: users } = await supabase
-    .from('users')
-    .select('id, full_name, email, phone, role, plan, created_at')
-    .order('created_at', { ascending: false })
+  const profileSnap = await adminDb.collection('users').doc(user.uid).get()
+  if (profileSnap.data()?.role !== 'admin') redirect('/dashboard')
+
+  const snap = await adminDb
+    .collection('users')
+    .orderBy('created_at', 'desc')
     .limit(200)
+    .get()
 
-  return <AdminUsersClient users={users ?? []} />
+  const users = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+
+  return <AdminUsersClient users={users as any[]} />
 }

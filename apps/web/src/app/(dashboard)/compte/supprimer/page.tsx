@@ -1,22 +1,26 @@
 'use client'
 
 import { useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { auth } from '@/lib/firebase/client'
+import { getIdToken, signOut } from 'firebase/auth'
 import Link from 'next/link'
 
-const API_URL = ''  // routes Next.js locales
+const API_URL = ''
 
 export default function SupprimerComptePage() {
   const [step, setStep] = useState<'confirm' | 'exporting' | 'deleting' | 'done' | 'error'>('confirm')
   const [errorMsg, setErrorMsg] = useState('')
-  const supabase = createClient()
+
+  async function getToken() {
+    const user = auth.currentUser
+    if (!user) return null
+    try { return await getIdToken(user) } catch { return null }
+  }
 
   async function handleExport() {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) return
-
+    const token = await getToken()
     const res = await fetch(`${API_URL}/api/account/export`, {
-      credentials: 'include',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
     if (!res.ok) return
 
@@ -32,19 +36,19 @@ export default function SupprimerComptePage() {
   async function handleDelete() {
     setStep('deleting')
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) throw new Error('Non connecté')
+      const token = await getToken()
+      if (!token) throw new Error('Non connecté')
 
       const res = await fetch(`${API_URL}/api/account`, {
-        method:      'DELETE',
-        credentials: 'include',
+        method:  'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
       })
       if (!res.ok) {
         const err = await res.json()
         throw new Error(err.error?.message ?? 'Erreur serveur')
       }
 
-      await supabase.auth.signOut()
+      await signOut(auth)
       setStep('done')
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : 'Erreur inconnue')

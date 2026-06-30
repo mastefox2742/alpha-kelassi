@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server'
+import { adminDb } from '@/lib/firebase/admin'
 import Link from 'next/link'
 import { ExamensHistorique } from './examens-historique'
 import {
@@ -37,37 +37,33 @@ function SubjectIcon({ name, className }: { name: string; className?: string }) 
 
 export default async function ExamensPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const { level, subject: subjectId, year, session } = await searchParams
-  const supabase = await createClient()
 
-  const [{ data: documents }, { data: subjects }] = await Promise.all([
-    supabase
-      .from('documents')
-      .select('id, title, level, year, session, is_premium, corrige_url, subject_id, subjects(id, name, level)')
-      .eq('type', 'examen')
-      .order('year', { ascending: false })
-      .order('created_at', { ascending: false })
-      .limit(200),
-    supabase.from('subjects').select('id, name, level').order('level').order('name'),
+  const [documentsSnap, subjectsSnap] = await Promise.all([
+    adminDb.collection('documents')
+      .where('type', '==', 'examen')
+      .orderBy('year', 'desc')
+      .limit(200)
+      .get(),
+    adminDb.collection('subjects').orderBy('level').orderBy('name').get(),
   ])
 
-  const allDocs     = documents ?? []
-  const allSubjects = subjects  ?? []
+  const allDocs     = documentsSnap.docs.map((d) => ({ id: d.id, ...d.data() })) as any[]
+  const allSubjects = subjectsSnap.docs.map((d) => ({ id: d.id, ...d.data() })) as any[]
 
   /* ── Vue 2 : liste des sujets d'une matière ──────────────────────────── */
   if (subjectId) {
-    const currentSubject = allSubjects.find((s) => s.id === subjectId)
+    const currentSubject = allSubjects.find((s: any) => s.id === subjectId)
     const lvl = currentSubject ? (LEVEL_CONFIG[currentSubject.level] ?? LEVEL_CONFIG['bepc']) : LEVEL_CONFIG['bepc']
 
-    let docs = allDocs.filter((d) => (d.subjects as { id: string } | null)?.id === subjectId)
-    if (year)    docs = docs.filter((d) => d.year?.toString() === year)
-    if (session) docs = docs.filter((d) => d.session === session)
+    let docs = allDocs.filter((d: any) => d.subject_id === subjectId)
+    if (year)    docs = docs.filter((d: any) => d.year?.toString() === year)
+    if (session) docs = docs.filter((d: any) => d.session === session)
 
     const availableYears = [...new Set(
-      allDocs.filter((d) => (d.subjects as { id: string } | null)?.id === subjectId)
-             .map((d) => d.year?.toString()).filter(Boolean) as string[]
+      allDocs.filter((d: any) => d.subject_id === subjectId)
+             .map((d: any) => d.year?.toString()).filter(Boolean) as string[]
     )].sort((a, b) => b.localeCompare(a))
 
-    // Regrouper par année
     const byYear = docs.reduce<Record<string, typeof docs>>((acc, doc) => {
       const y = doc.year?.toString() ?? 'N/A'
       if (!acc[y]) acc[y] = []
@@ -79,7 +75,6 @@ export default async function ExamensPage({ searchParams }: { searchParams: Prom
     return (
       <div className="max-w-4xl mx-auto px-4 py-8">
 
-        {/* Fil d'Ariane */}
         <nav className="flex items-center gap-1.5 text-sm mb-6 flex-wrap">
           <Link href="/examens" className="text-violet-600 hover:underline font-medium">Examens</Link>
           {currentSubject && (
@@ -99,7 +94,6 @@ export default async function ExamensPage({ searchParams }: { searchParams: Prom
           )}
         </nav>
 
-        {/* En-tête matière */}
         {currentSubject && (
           <div className="flex items-center gap-4 mb-6">
             <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${lvl.bg} border-2 ${lvl.border} ${lvl.color}`}>
@@ -112,7 +106,6 @@ export default async function ExamensPage({ searchParams }: { searchParams: Prom
           </div>
         )}
 
-        {/* Filtres année + session */}
         <div className="flex flex-wrap gap-2 mb-6">
           {availableYears.slice(0, 8).map((y) => (
             <Link
@@ -150,7 +143,6 @@ export default async function ExamensPage({ searchParams }: { searchParams: Prom
           )}
         </div>
 
-        {/* Liste des sujets par année */}
         {sortedYears.length === 0 ? (
           <div className="text-center py-20">
             <p className="text-4xl mb-3">📭</p>
@@ -168,20 +160,17 @@ export default async function ExamensPage({ searchParams }: { searchParams: Prom
                   <span className="text-xs text-gray-400">{byYear[yr].length} sujet{byYear[yr].length !== 1 ? 's' : ''}</span>
                 </div>
                 <div className="space-y-2">
-                  {byYear[yr].map((doc, idx) => {
-                    const hasCorrige   = !!doc.corrige_url
+                  {byYear[yr].map((doc: any, idx: number) => {
+                    const hasCorrige = !!doc.corrige_url
                     return (
                       <Link
                         key={doc.id}
                         href={`/examens/${doc.id}`}
-                        className={`group flex items-center gap-4 bg-white rounded-2xl border border-gray-100 p-4 hover:border-violet-200 hover:shadow-md transition-all`}
+                        className="group flex items-center gap-4 bg-white rounded-2xl border border-gray-100 p-4 hover:border-violet-200 hover:shadow-md transition-all"
                       >
-                        {/* Numéro */}
                         <div className={`flex-shrink-0 w-10 h-10 rounded-full border-2 ${lvl.border} bg-white flex items-center justify-center`}>
                           <span className={`text-xs font-bold ${lvl.color}`}>{String(idx + 1).padStart(2, '0')}</span>
                         </div>
-
-                        {/* Contenu */}
                         <div className="flex-1 min-w-0">
                           <h3 className="font-bold text-gray-800 group-hover:text-violet-700 transition-colors text-sm leading-snug">
                             {doc.title}
@@ -213,8 +202,6 @@ export default async function ExamensPage({ searchParams }: { searchParams: Prom
                             )}
                           </div>
                         </div>
-
-                        {/* Flèche */}
                         <span className="flex-shrink-0 text-sm font-bold text-violet-500 opacity-0 group-hover:opacity-100 transition-opacity">→</span>
                       </Link>
                     )
@@ -231,13 +218,13 @@ export default async function ExamensPage({ searchParams }: { searchParams: Prom
   /* ── Vue 1 : grille des matières par niveau ───────────────────────────── */
   const activeLevel = level ?? ''
   const docsPerSubject = allDocs.reduce<Record<string, number>>((acc, d) => {
-    const sid = (d.subjects as { id: string } | null)?.id
+    const sid = d.subject_id as string | undefined
     if (sid) acc[sid] = (acc[sid] ?? 0) + 1
     return acc
   }, {})
 
   const filteredSubjects = activeLevel
-    ? allSubjects.filter((s) => s.level === activeLevel)
+    ? allSubjects.filter((s: any) => s.level === activeLevel)
     : allSubjects
 
   const levelTabs = [
@@ -257,18 +244,14 @@ export default async function ExamensPage({ searchParams }: { searchParams: Prom
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
 
-      {/* Header */}
       <div className="mb-6">
         <h1 className="text-3xl font-black text-gray-900">Examens d'État</h1>
         <p className="text-gray-400 mt-1 text-sm">Congo Brazzaville · BEPC & BAC</p>
       </div>
 
-      {/* Historique récent */}
       <ExamensHistorique />
 
-      {/* Filtres */}
       <div className="bg-white rounded-2xl border border-gray-100 p-4 mb-8 space-y-3">
-        {/* Niveau */}
         <div className="flex flex-wrap gap-2">
           {levelTabs.map((tab) => {
             const cfg = LEVEL_CONFIG[tab.value]
@@ -290,7 +273,6 @@ export default async function ExamensPage({ searchParams }: { searchParams: Prom
           })}
         </div>
 
-        {/* Session */}
         <div className="flex flex-wrap gap-2">
           {sessionTabs.map((s) => (
             <Link
@@ -308,7 +290,6 @@ export default async function ExamensPage({ searchParams }: { searchParams: Prom
         </div>
       </div>
 
-      {/* Grille des matières */}
       {filteredSubjects.length === 0 ? (
         <div className="text-center py-20">
           <p className="text-4xl mb-3">📭</p>
@@ -319,7 +300,7 @@ export default async function ExamensPage({ searchParams }: { searchParams: Prom
       ) : (
         <div className="space-y-10">
           {(['bepc', 'bac_a', 'bac_c', 'bac_d'] as const).map((lvlKey) => {
-            const lvlSubjects = filteredSubjects.filter((s) => s.level === lvlKey)
+            const lvlSubjects = filteredSubjects.filter((s: any) => s.level === lvlKey)
             if (lvlSubjects.length === 0) return null
             const cfg = LEVEL_CONFIG[lvlKey]
             return (
@@ -332,7 +313,7 @@ export default async function ExamensPage({ searchParams }: { searchParams: Prom
                     {cfg.label}
                   </Link>
                   <span className="text-xs text-gray-400">
-                    {lvlSubjects.reduce((s, sub) => s + (docsPerSubject[sub.id] ?? 0), 0)} sujets
+                    {lvlSubjects.reduce((s: number, sub: any) => s + (docsPerSubject[sub.id] ?? 0), 0)} sujets
                   </span>
                 </div>
                 <ExamenSubjectGrid subjects={lvlSubjects} docsPerSubject={docsPerSubject} />
@@ -345,7 +326,6 @@ export default async function ExamensPage({ searchParams }: { searchParams: Prom
   )
 }
 
-/* ── Grille de cartes matières (examens) ──────────────────────────────── */
 function ExamenSubjectGrid({
   subjects,
   docsPerSubject,
@@ -365,7 +345,6 @@ function ExamenSubjectGrid({
             href={`/examens?subject=${s.id}`}
             className={`group relative flex flex-col rounded-2xl border-2 ${cfg.border} bg-white overflow-hidden hover:shadow-xl hover:-translate-y-1 transition-all duration-200`}
           >
-            {/* Barre colorée */}
             <div className={`${cfg.headerBg} px-3 py-2 flex items-center justify-between`}>
               <span className="text-white font-black text-xs tracking-wider uppercase truncate">{cfg.label}</span>
               <svg width="20" height="20" viewBox="0 0 20 20" className="flex-shrink-0">
@@ -373,12 +352,10 @@ function ExamenSubjectGrid({
               </svg>
             </div>
 
-            {/* Icône */}
             <div className={`flex-1 flex items-center justify-center py-6 ${cfg.bg} ${cfg.color}`}>
               <SubjectIcon name={s.name} className="w-10 h-10" />
             </div>
 
-            {/* Nom */}
             <div className="px-3 py-2.5 bg-white border-t border-gray-100 text-center">
               <p className={`text-xs font-bold ${cfg.color} leading-tight line-clamp-2`}>
                 {s.name}

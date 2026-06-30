@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { onAuthChange, getIdToken } from '@/lib/firebase/auth'
 import { flashcardsDB, type OfflineFlashcard } from '@/lib/offline/flashcards-db'
 
 interface Flashcard extends OfflineFlashcard {}
@@ -25,7 +25,6 @@ export default function FlashcardsPage() {
   const [isOnline,     setIsOnline]     = useState(true)
   const [pendingCount, setPendingCount] = useState(0)
   const syncingRef = useRef(false)
-  const supabase   = createClient()
 
   // ── Détection réseau ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -42,16 +41,22 @@ export default function FlashcardsPage() {
 
   // ── Init : plan + cartes ──────────────────────────────────────────────────
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!session) { setLoading(false); return }
-      supabase.from('users').select('plan').eq('id', session.user.id).single().then(({ data }) => {
-        const p = data?.plan ?? 'free'
+    const unsub = onAuthChange(async (user) => {
+      if (!user) { setLoading(false); return }
+      try {
+        const token = await getIdToken()
+        const res = await fetch('/api/users/me', { headers: { Authorization: `Bearer ${token}` } })
+        const json = await res.json()
+        const p = json.data?.plan ?? 'free'
         setPlan(p)
         if (p === 'premium') loadDueCards()
         else setLoading(false)
-      })
+      } catch {
+        setLoading(false)
+      }
     })
     refreshPendingCount()
+    return unsub
   }, [])
 
   // ── Charge les cartes dues (serveur → cache IDB, ou IDB si offline) ───────

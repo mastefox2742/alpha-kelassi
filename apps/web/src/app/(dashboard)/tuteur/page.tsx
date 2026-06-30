@@ -3,7 +3,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
-import { createClient } from '@/lib/supabase/client'
+import { auth, db } from '@/lib/firebase/client'
+import { getIdToken } from 'firebase/auth'
+import { doc, getDoc } from 'firebase/firestore'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
 
 interface ImageAttachment {
@@ -18,7 +20,7 @@ interface Message {
   content:    string
   streaming?: boolean
   image?:     string
-  isSolution?: boolean  // indique une réponse en mode Solution Directe
+  isSolution?: boolean
 }
 
 interface Session {
@@ -102,6 +104,13 @@ async function compressImage(file: File): Promise<ImageAttachment> {
   })
 }
 
+/** Retourne le Firebase ID Token du user courant, ou null */
+async function getAuthToken(): Promise<string | null> {
+  const user = auth.currentUser
+  if (!user) return null
+  try { return await getIdToken(user) } catch { return null }
+}
+
 export default function TuteurPage() {
   const [messages,        setMessages]        = useState<Message[]>([])
   const [sessions,        setSessions]        = useState<Session[]>([])
@@ -119,7 +128,6 @@ export default function TuteurPage() {
   const bottomRef   = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const supabase    = createClient()
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -130,27 +138,34 @@ export default function TuteurPage() {
     else if (docId) setInput('Explique-moi ce document.')
   }, [])
 
-  // Charge le plan utilisateur (une seule fois)
+  // Charge le plan utilisateur via Firebase
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!session) return
-      supabase.from('users').select('plan').eq('id', session.user.id).single()
-        .then(({ data }) => setUserPlan((data?.plan as 'free' | 'premium') ?? 'free'))
+    const unsubscribe = auth.onAuthStateChanged(async (user) => {
+      if (!user) return
+      try {
+        const snap = await getDoc(doc(db, 'users', user.uid))
+        if (snap.exists()) {
+          setUserPlan((snap.data()?.plan as 'free' | 'premium') ?? 'free')
+        }
+      } catch {}
     })
+    return () => unsubscribe()
   }, [])
 
   useEffect(() => { loadSessions() }, [])
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
   async function loadSessions() {
-    const res  = await fetch('/api/ai/sessions')
+    const token = await getAuthToken()
+    const res   = await fetch('/api/ai/sessions', token ? { headers: { Authorization: `Bearer ${token}` } } : {})
     if (!res.ok) return
     const json = await res.json() as { data?: typeof sessions }
     setSessions(json.data ?? [])
   }
 
   async function loadSessionMessages(sid: string) {
-    const res  = await fetch(`/api/ai/sessions/${sid}/messages`)
+    const token = await getAuthToken()
+    const res   = await fetch(`/api/ai/sessions/${sid}/messages`, token ? { headers: { Authorization: `Bearer ${token}` } } : {})
     if (!res.ok) return
     const json = await res.json() as { data?: { id: string; role: 'user' | 'assistant'; content: string }[] }
     setMessages((json.data ?? []).map((m) => ({ ...m })))
@@ -161,7 +176,8 @@ export default function TuteurPage() {
   async function clearHistory() {
     if (!confirm('Effacer tout l\'historique des conversations ?')) return
     setClearingHistory(true)
-    await fetch('/api/ai/sessions', { method: 'DELETE' })
+    const token = await getAuthToken()
+    await fetch('/api/ai/sessions', { method: 'DELETE', headers: token ? { Authorization: `Bearer ${token}` } : {} })
     setSessions([])
     setMessages([])
     setSessionId(null)
@@ -182,7 +198,6 @@ export default function TuteurPage() {
     } catch {
       alert('Impossible de lire cette image.')
     }
-    // reset input pour permettre de re-sélectionner le même fichier
     e.target.value = ''
   }
 
@@ -225,10 +240,14 @@ export default function TuteurPage() {
       if (documentId)  chatBody.document_id = documentId
       if (imageToSend) chatBody.image = { data: imageToSend.data, mimeType: imageToSend.mimeType }
 
-      const res = await fetch('/api/ai/chat', {
+      const token = await getAuthToken()
+      const res   = await fetch('/api/ai/chat', {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(chatBody),
+        headers: {
+          'Content-Type':  'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(chatBody),
       })
 
       if (!res.ok) {
@@ -320,14 +339,12 @@ export default function TuteurPage() {
   const canSend     = (input.trim().length > 0 || !!selectedImage) && !loading
   const hasMessages = messages.length > 0
 
-  // Détermine si le bouton Solution Directe est cliquable
   function handleSolutionClick() {
     if (!canSend) return
     if (userPlan === 'premium') {
       sendMessage(true)
     } else {
-      // Free : demande confirmation avant de consommer tous les crédits
-      if ((quotaRemaining ?? 0) <= 0) return // quota épuisé, le bloc quota s'affiche déjà
+      if ((quotaRemaining ?? 0) <= 0) return
       setShowSolutionModal(true)
     }
   }
@@ -492,14 +509,12 @@ export default function TuteurPage() {
 
                 {msg.role === 'user' ? (
                   <div className="max-w-[80%] flex flex-col items-end gap-2">
-                    {/* Image si présente */}
                     {msg.image && (
                       <div className="rounded-2xl rounded-br-sm overflow-hidden border-2 border-emerald-500 shadow-md max-w-xs">
                         <Image src={msg.image} alt="Exercice envoyé" width={300} height={300}
                           className="object-contain max-h-64 w-auto" unoptimized />
                       </div>
                     )}
-                    {/* Texte */}
                     {msg.content && msg.content !== '📷 Aide-moi avec cet exercice.' && (
                       <div className="px-4 py-3 rounded-2xl rounded-br-sm text-sm whitespace-pre-wrap leading-relaxed bg-emerald-600 text-white shadow-md">
                         {msg.content}
@@ -545,7 +560,6 @@ export default function TuteurPage() {
         {/* ── Zone de saisie ────────────────────────────────────────── */}
         <div className="bg-white border-t border-gray-100 px-4 py-4 flex-shrink-0">
 
-          {/* Contexte exercice */}
           {exerciseContext && (
             <div className="flex items-center gap-2 mb-3 px-3 py-2 bg-purple-50 border border-purple-100 rounded-xl text-xs text-purple-700">
               <span>📋</span>
@@ -554,7 +568,6 @@ export default function TuteurPage() {
             </div>
           )}
 
-          {/* Prévisualisation image sélectionnée */}
           {selectedImage && (
             <div className="mb-3 flex items-start gap-3 p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
               <div className="relative flex-shrink-0">
@@ -572,7 +585,6 @@ export default function TuteurPage() {
             </div>
           )}
 
-          {/* Quota atteint */}
           {quotaRemaining === 0 ? (
             <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3">
               <p className="text-sm text-amber-700 font-medium">Limite journalière atteinte.</p>
@@ -582,7 +594,6 @@ export default function TuteurPage() {
             </div>
           ) : (
             <div className="max-w-3xl mx-auto space-y-2">
-              {/* Bouton Solution Directe — visible quand il y a au moins un échange */}
               {hasMessages && (
                 <div className="flex justify-end">
                   <button
@@ -602,7 +613,6 @@ export default function TuteurPage() {
               )}
 
               <div className="flex items-end gap-2">
-                {/* Bouton image */}
                 <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageSelect} />
                 <button
                   onClick={() => fileInputRef.current?.click()}
@@ -617,7 +627,6 @@ export default function TuteurPage() {
                   📷
                 </button>
 
-                {/* Zone de texte */}
                 <div className="flex-1 relative">
                   <textarea
                     ref={textareaRef}
@@ -632,7 +641,6 @@ export default function TuteurPage() {
                   />
                 </div>
 
-                {/* Bouton envoyer */}
                 <button
                   onClick={() => sendMessage()}
                   disabled={!canSend}

@@ -1,57 +1,68 @@
-import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { verifyAuth, adminDb } from '@/lib/firebase/server-auth'
 import { computeLevel, BADGES } from '@/lib/xp'
 
 /** GET /api/progress/dashboard — toutes les données de progression élève */
-export async function GET() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+export async function GET(req: NextRequest) {
+  const userId = await verifyAuth(req)
+  if (!userId) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
 
   // Récupère les IDs de sessions pour compter les questions
-  const { data: sessions } = await supabase
-    .from('chat_sessions')
-    .select('id')
-    .eq('user_id', user.id)
-
-  const sessionIds = (sessions ?? []).map((s) => s.id)
+  const sessionsSnap = await adminDb
+    .collection('chat_sessions')
+    .where('user_id', '==', userId)
+    .get()
+  const sessionIds = sessionsSnap.docs.map((d) => d.id)
 
   const [
-    { data: userRow },
-    { data: badges },
-    { data: progressRows },
-    { data: nextCard },
-    questionsResult,
-    { count: viewsCount },
+    userSnap,
+    badgesSnap,
+    progressSnap,
+    nextCardSnap,
   ] = await Promise.all([
-    supabase.from('users').select('xp, full_name, plan').eq('id', user.id).single(),
-    supabase.from('user_badges').select('badge_code, earned_at').eq('user_id', user.id).order('earned_at'),
-    supabase.from('user_progress')
-      .select('subject_id, flashcards_reviewed, score_avg, streak_days, last_active, subjects(name, level)')
-      .eq('user_id', user.id),
-    supabase.from('flashcards')
-      .select('id, front, next_review, documents(title)')
-      .eq('user_id', user.id)
-      .lte('next_review', new Date().toISOString())
-      .order('next_review', { ascending: true })
+    adminDb.collection('users').doc(userId).get(),
+    adminDb.collection('user_badges').where('user_id', '==', userId).orderBy('earned_at').get(),
+    adminDb.collection('user_progress').where('user_id', '==', userId).get(),
+    adminDb.collection('flashcards')
+      .where('user_id', '==', userId)
+      .where('next_review', '<=', new Date().toISOString())
+      .orderBy('next_review', 'asc')
       .limit(1)
-      .maybeSingle(),
-    sessionIds.length > 0
-      ? supabase.from('chat_messages')
-          .select('id', { count: 'exact', head: true })
-          .eq('role', 'user')
-          .in('session_id', sessionIds)
-      : Promise.resolve({ count: 0, data: null, error: null }),
-    supabase.from('document_views')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', user.id),
+      .get(),
   ])
 
-  const xp        = userRow?.xp ?? 0
-  const levelInfo = computeLevel(xp)
-  const maxStreak = Math.max(...(progressRows ?? []).map((p) => p.streak_days), 0)
+  const userRow     = userSnap.data()
+  const badges      = badgesSnap.docs.map((d) => d.data())
+  const progressRows = progressSnap.docs.map((d) => d.data())
+  const nextCard    = nextCardSnap.empty ? null : { id: nextCardSnap.docs[0].id, ...nextCardSnap.docs[0].data() }
 
-  const badgesWithMeta = (badges ?? []).map((b) => ({
+  // Compte les questions posées (messages user dans toutes les sessions)
+  let questionsCount = 0
+  if (sessionIds.length > 0) {
+    // Firestore ne supporte pas IN > 30, on compte en mémoire sur sessionIds
+    for (let i = 0; i < sessionIds.length; i += 30) {
+      const chunk = sessionIds.slice(i, i + 30)
+      const snap  = await adminDb
+        .collection('chat_messages')
+        .where('session_id', 'in', chunk)
+        .where('role', '==', 'user')
+        .get()
+      questionsCount += snap.size
+    }
+  }
+
+  // Compte les document_views
+  const viewsSnap = await adminDb
+    .collection('document_views')
+    .where('user_id', '==', userId)
+    .get()
+  const viewsCount = viewsSnap.size
+
+  const xp       = userRow?.xp ?? 0
+  const levelInfo = computeLevel(xp)
+  const maxStreak = Math.max(...progressRows.map((p) => p.streak_days ?? 0), 0)
+
+  const badgesWithMeta = badges.map((b) => ({
     code:      b.badge_code,
     earned_at: b.earned_at,
     ...(BADGES[b.badge_code as keyof typeof BADGES] ?? { label: b.badge_code, icon: '🏅', description: '' }),
@@ -60,17 +71,17 @@ export async function GET() {
   return NextResponse.json({
     data: {
       xp,
-      level:       levelInfo.level,
-      level_label: levelInfo.label,
+      level:         levelInfo.level,
+      level_label:   levelInfo.label,
       next_level_xp: levelInfo.nextXp,
-      streak:      maxStreak,
-      badges:      badgesWithMeta,
-      progress:    progressRows ?? [],
-      next_review: nextCard ?? null,
+      streak:        maxStreak,
+      badges:        badgesWithMeta,
+      progress:      progressRows,
+      next_review:   nextCard,
       stats: {
-        questions_asked:     questionsResult.count ?? 0,
-        documents_viewed:    viewsCount ?? 0,
-        flashcards_reviewed: (progressRows ?? []).reduce((s, p) => s + (p.flashcards_reviewed ?? 0), 0),
+        questions_asked:     questionsCount,
+        documents_viewed:    viewsCount,
+        flashcards_reviewed: progressRows.reduce((s, p) => s + (p.flashcards_reviewed ?? 0), 0),
       },
     },
   })

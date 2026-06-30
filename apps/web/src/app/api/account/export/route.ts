@@ -1,57 +1,41 @@
-import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { verifyAuth, adminDb } from '@/lib/firebase/server-auth'
 
 /** GET /api/account/export — export RGPD de toutes les données personnelles */
-export async function GET() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+export async function GET(req: NextRequest) {
+  const userId = await verifyAuth(req)
+  if (!userId) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
 
   const [
-    { data: userRow },
-    { data: subscriptions },
-    { data: progress },
-    { data: flashcards },
-    { data: sessions },
-    { data: badges },
+    userSnap,
+    subsSnap,
+    progressSnap,
+    flashcardsSnap,
+    sessionsSnap,
+    badgesSnap,
   ] = await Promise.all([
-    supabase.from('users')
-      .select('id, email, phone, full_name, plan, created_at')
-      .eq('id', user.id)
-      .single(),
-    supabase.from('subscriptions')
-      .select('plan, status, expires_at, created_at')
-      .eq('user_id', user.id),
-    supabase.from('user_progress')
-      .select('*, subjects(name, level)')
-      .eq('user_id', user.id),
-    supabase.from('flashcards')
-      .select('front, back, interval, reps, next_review, created_at')
-      .eq('user_id', user.id)
-      .limit(500),
-    supabase.from('chat_sessions')
-      .select('id, created_at, title')
-      .eq('user_id', user.id)
-      .limit(100),
-    supabase.from('user_badges')
-      .select('badge_code, earned_at')
-      .eq('user_id', user.id),
+    adminDb.collection('users').doc(userId).get(),
+    adminDb.collection('subscriptions').where('user_id', '==', userId).get(),
+    adminDb.collection('user_progress').where('user_id', '==', userId).get(),
+    adminDb.collection('flashcards').where('user_id', '==', userId).limit(500).get(),
+    adminDb.collection('chat_sessions').where('user_id', '==', userId).limit(100).get(),
+    adminDb.collection('user_badges').where('user_id', '==', userId).get(),
   ])
 
   const exportData = {
     generated_at:  new Date().toISOString(),
-    user:          userRow,
-    subscriptions,
-    progress,
-    flashcards,
-    chat_sessions: sessions,
-    badges,
+    user:          userSnap.exists ? { id: userId, ...userSnap.data() } : null,
+    subscriptions: subsSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
+    progress:      progressSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
+    flashcards:    flashcardsSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
+    chat_sessions: sessionsSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
+    badges:        badgesSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
   }
 
   return new Response(JSON.stringify(exportData, null, 2), {
     headers: {
       'Content-Type':        'application/json',
-      'Content-Disposition': `attachment; filename="kelassi-data-${user.id.slice(0, 8)}.json"`,
+      'Content-Disposition': `attachment; filename="kelassi-data-${userId.slice(0, 8)}.json"`,
     },
   })
 }

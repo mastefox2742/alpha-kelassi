@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 
 const LEVELS = [
@@ -20,8 +19,7 @@ const TIPS = [
 const STEPS = ['Niveau', 'Matières', 'Tutoriel', 'Parrainage', 'C\'est parti']
 
 export default function OnboardingPage() {
-  const router   = useRouter()
-  const supabase = createClient()
+  const router = useRouter()
 
   const [step,             setStep]             = useState(0)
   const [level,            setLevel]            = useState<string | null>(null)
@@ -34,8 +32,13 @@ export default function OnboardingPage() {
 
   async function handleLevelSelect(lvl: string) {
     setLevel(lvl)
-    const { data } = await supabase.from('subjects').select('id, name').eq('level', lvl).order('name')
-    setSubjects(data ?? [])
+    try {
+      const res = await fetch(`/api/subjects?level=${lvl}`)
+      const json = await res.json()
+      setSubjects(json.data ?? [])
+    } catch {
+      setSubjects([])
+    }
     setStep(1)
   }
 

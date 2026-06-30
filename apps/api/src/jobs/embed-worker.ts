@@ -3,6 +3,7 @@ import pdfParse from 'pdf-parse'
 import { supabaseAdmin as supabase } from '../lib/supabase.js'
 import { chunkText } from '../lib/chunker.js'
 import { embedTexts } from '../lib/embeddings.js'
+import { synthesizeQueue } from './synthesize-queue.js'
 
 interface EmbedJobData {
   document_id: string
@@ -90,7 +91,24 @@ async function processEmbedJob(job: Job<EmbedJobData>) {
     .eq('id', document_id)
 
   await job.updateProgress(100)
-  console.log(`[embed-worker] Document ${document_id} indexÃ© â€” ${chunks.length} chunks`)
+  console.log(`[embed-worker] Document ${document_id} indexed — ${chunks.length} chunks`)
+
+  // Auto-déclenche la synthèse pour les cours
+  const { data: docMeta } = await supabase
+    .from('documents')
+    .select('type, title')
+    .eq('id', document_id)
+    .single()
+
+  if (docMeta?.type === 'cours' && synthesizeQueue) {
+    await synthesizeQueue.add(
+      `synthesize:${document_id}`,
+      { document_id, title: docMeta.title ?? 'Document' },
+      { jobId: `synthesize:${document_id}` }
+    )
+    console.log(`[embed-worker] Synthèse déclenchée pour “${docMeta.title}”`)
+  }
+
   return { document_id, chunks_count: chunks.length }
 }
 

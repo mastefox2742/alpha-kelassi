@@ -1,19 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { verifyAuth, adminDb } from '@/lib/firebase/server-auth'
 import { z } from 'zod'
 import { computeSM2 } from '@/lib/sm2'
 import { awardXP, checkAndAwardBadges } from '@/lib/xp'
 
 const schema = z.object({
-  flashcard_id: z.string().uuid(),
+  flashcard_id: z.string().min(1),
   quality:      z.number().int().min(0).max(5),
 })
 
 /** POST /api/flashcards/review — enregistre une révision SM-2 */
 export async function POST(req: NextRequest) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+  const userId = await verifyAuth(req)
+  if (!userId) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
 
   let body: z.infer<typeof schema>
   try { body = schema.parse(await req.json()) }
@@ -21,39 +20,37 @@ export async function POST(req: NextRequest) {
 
   const { flashcard_id, quality } = body
 
-  const { data: card } = await supabase
-    .from('flashcards')
-    .select('ease_factor, interval, reps')
-    .eq('id', flashcard_id)
-    .eq('user_id', user.id)
-    .single()
+  const cardRef  = adminDb.collection('flashcards').doc(flashcard_id)
+  const cardSnap = await cardRef.get()
 
-  if (!card) return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 })
+  if (!cardSnap.exists || cardSnap.data()?.user_id !== userId) {
+    return NextResponse.json({ error: { code: 'NOT_FOUND' } }, { status: 404 })
+  }
 
+  const card = cardSnap.data()!
   const result = computeSM2(
     { easeFactor: card.ease_factor, interval: card.interval, reps: card.reps },
     quality
   )
 
-  const { data: updated, error } = await supabase
-    .from('flashcards')
-    .update({
+  try {
+    await cardRef.update({
       ease_factor: result.easeFactor,
       interval:    result.interval,
       reps:        result.reps,
       next_review: result.nextReview.toISOString(),
     })
-    .eq('id', flashcard_id)
-    .select()
-    .single()
+  } catch (err) {
+    return NextResponse.json({ error: { code: 'DB_ERROR', message: (err as Error).message } }, { status: 500 })
+  }
 
-  if (error) return NextResponse.json({ error: { code: 'DB_ERROR', message: error.message } }, { status: 500 })
+  const updated = { id: flashcard_id, ...card, ease_factor: result.easeFactor, interval: result.interval, reps: result.reps, next_review: result.nextReview.toISOString() }
 
   // XP + badges en arrière-plan
   const xpAmount = quality >= 4 ? 3 : quality >= 3 ? 2 : 0
   if (xpAmount > 0) {
-    awardXP(user.id, xpAmount).catch(() => null)
-    checkAndAwardBadges(user.id).catch(() => null)
+    awardXP(userId, xpAmount).catch(() => null)
+    checkAndAwardBadges(userId).catch(() => null)
   }
 
   return NextResponse.json({ data: updated })

@@ -1,16 +1,5 @@
-import { createClient } from '@supabase/supabase-js'
-
-// ── Admin client lazy ────────────────────────────────────────────────────────
-let _admin: ReturnType<typeof createClient> | null = null
-function getAdmin() {
-  if (!_admin) {
-    _admin = createClient(
-      process.env['NEXT_PUBLIC_SUPABASE_URL']!,
-      process.env['SUPABASE_SERVICE_ROLE_KEY']!
-    )
-  }
-  return _admin
-}
+import { adminDb } from './firebase/admin'
+import { FieldValue } from 'firebase-admin/firestore'
 
 // ── XP amounts ───────────────────────────────────────────────────────────────
 export const XP = {
@@ -43,51 +32,69 @@ export function computeLevel(xp: number): { level: number; label: string; nextXp
 
 // ── XP ───────────────────────────────────────────────────────────────────────
 export async function awardXP(userId: string, amount: number): Promise<void> {
-  await getAdmin().rpc('increment_xp', { p_user_id: userId, p_amount: amount })
+  const clampedAmount = Math.min(amount, 1000) // borne max sécurité
+  await adminDb.collection('users').doc(userId).update({
+    xp: FieldValue.increment(clampedAmount),
+  })
 }
 
 // ── Badges ───────────────────────────────────────────────────────────────────
 export async function checkAndAwardBadges(userId: string): Promise<void> {
-  const supabase = getAdmin()
-
-  const sessionIds = (
-    await supabase.from('chat_sessions').select('id').eq('user_id', userId)
-  ).data?.map((s) => s.id) ?? []
+  const sessionsSnap = await adminDb
+    .collection('chat_sessions')
+    .where('user_id', '==', userId)
+    .get()
+  const sessionIds = sessionsSnap.docs.map((d) => d.id)
 
   const [
-    { data: existingBadges },
-    { data: progressRows },
-    { count: flashcardCount },
-    { count: questionCount },
+    existingBadgesSnap,
+    progressSnap,
+    flashcardSnap,
   ] = await Promise.all([
-    supabase.from('user_badges').select('badge_code').eq('user_id', userId),
-    supabase.from('user_progress').select('streak_days').eq('user_id', userId),
-    supabase.from('flashcards')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', userId)
-      .gte('reps', 1),
-    sessionIds.length > 0
-      ? supabase.from('chat_messages')
-          .select('id', { count: 'exact', head: true })
-          .eq('role', 'user')
-          .in('session_id', sessionIds)
-      : Promise.resolve({ count: 0 }),
+    adminDb.collection('user_badges').where('user_id', '==', userId).get(),
+    adminDb.collection('user_progress').where('user_id', '==', userId).get(),
+    adminDb.collection('flashcards')
+      .where('user_id', '==', userId)
+      .where('reps', '>=', 1)
+      .get(),
   ])
 
-  const earned    = new Set((existingBadges ?? []).map((b) => b.badge_code))
-  const maxStreak = Math.max(...(progressRows ?? []).map((p) => p.streak_days), 0)
+  // Compte les questions
+  let questionCount = 0
+  for (let i = 0; i < sessionIds.length; i += 30) {
+    const chunk = sessionIds.slice(i, i + 30)
+    if (chunk.length === 0) break
+    const snap = await adminDb
+      .collection('chat_messages')
+      .where('session_id', 'in', chunk)
+      .where('role', '==', 'user')
+      .get()
+    questionCount += snap.size
+  }
+
+  const earned    = new Set(existingBadgesSnap.docs.map((d) => d.data().badge_code as string))
+  const progressRows = progressSnap.docs.map((d) => d.data())
+  const maxStreak = Math.max(...progressRows.map((p) => (p.streak_days as number) ?? 0), 0)
+  const flashcardCount = flashcardSnap.size
+
   const toAward: BadgeCode[] = []
 
-  if (!earned.has('first_steps'))       toAward.push('first_steps')
-  if (maxStreak >= 3  && !earned.has('streak_3'))          toAward.push('streak_3')
-  if (maxStreak >= 7  && !earned.has('streak_7'))          toAward.push('streak_7')
-  if ((flashcardCount ?? 0) >= 50 && !earned.has('flashcard_veteran')) toAward.push('flashcard_veteran')
-  if ((questionCount  ?? 0) >= 10 && !earned.has('curious_mind'))      toAward.push('curious_mind')
+  if (!earned.has('first_steps'))                                               toAward.push('first_steps')
+  if (maxStreak >= 3  && !earned.has('streak_3'))                               toAward.push('streak_3')
+  if (maxStreak >= 7  && !earned.has('streak_7'))                               toAward.push('streak_7')
+  if (flashcardCount >= 50 && !earned.has('flashcard_veteran'))                 toAward.push('flashcard_veteran')
+  if (questionCount  >= 10 && !earned.has('curious_mind'))                      toAward.push('curious_mind')
 
   if (toAward.length === 0) return
 
-  await supabase.from('user_badges').upsert(
-    toAward.map((badge_code) => ({ user_id: userId, badge_code })),
-    { onConflict: 'user_id,badge_code', ignoreDuplicates: true }
-  )
+  const batch = adminDb.batch()
+  for (const badge_code of toAward) {
+    const ref = adminDb.collection('user_badges').doc(`${userId}_${badge_code}`)
+    batch.set(ref, {
+      user_id:    userId,
+      badge_code,
+      earned_at:  new Date().toISOString(),
+    }, { merge: true })
+  }
+  await batch.commit()
 }

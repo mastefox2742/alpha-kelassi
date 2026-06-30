@@ -2,7 +2,8 @@
 
 import { useState, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
+import { auth } from '@/lib/firebase/client'
+import { getIdToken } from 'firebase/auth'
 import Link from 'next/link'
 
 const FEATURES_FREE = [
@@ -35,7 +36,7 @@ const PLANS = [
   {
     id: 'yearly' as const,
     label: 'Annuel',
-    price: '20 000',
+    price: '20 000',
     currency: 'FCFA',
     period: '/an',
     subprice: '≈ 33 $ · économise 4 000 FCFA',
@@ -53,16 +54,17 @@ function BillingContent() {
 
   async function handleSubscribe(plan: 'monthly' | 'yearly') {
     setLoading(plan)
-    const supabase = createClient()
-    const { data: { session } } = await supabase.auth.getSession()
-    const token = session?.access_token
+    const user  = auth.currentUser
+    const token = user ? await getIdToken(user).catch(() => null) : null
     const endpoint = payMethod === 'card' ? '/api/billing/checkout' : '/api/billing/cinetpay'
-    const body = payMethod === 'card' ? { plan } : { plan, phone }
+    const body     = payMethod === 'card' ? { plan } : { plan, phone }
     const res = await fetch(endpoint, {
-      method:      'POST',
-      headers:     { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body:        JSON.stringify(body),
+      method:  'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body),
     })
     const json = (await res.json()) as { data?: { url?: string } }
     if (json.data?.url) window.location.href = json.data.url

@@ -1,4 +1,5 @@
-import { createClient } from '@/lib/supabase/server'
+import { getServerUser } from '@/lib/supabase/server'
+import { adminDb } from '@/lib/firebase/admin'
 import { notFound, redirect } from 'next/navigation'
 import { FreeLimitGate } from '@/components/free-limit-gate'
 import { DocumentReaderClient } from '@/components/document-reader-client'
@@ -13,20 +14,23 @@ const LEVEL_CONFIG: Record<string, { label: string; color: string; bg: string }>
 
 export default async function CoursDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getServerUser()
   if (!user) redirect('/login')
 
-  const { data: doc } = await supabase
-    .from('documents')
-    .select('*, subjects(name, level)')
-    .eq('id', id)
-    .single()
+  const [docSnap, profileSnap, chaptersSnap] = await Promise.all([
+    adminDb.collection('documents').doc(id).get(),
+    adminDb.collection('users').doc(user.uid).get(),
+    adminDb.collection('course_chapters')
+      .where('document_id', '==', id)
+      .where('status', '==', 'done')
+      .get(),
+  ])
 
-  if (!doc) notFound()
+  if (!docSnap.exists) notFound()
 
-  const { data: profile } = await supabase.from('users').select('plan').eq('id', user.id).single()
-  const plan = profile?.plan ?? 'free'
+  const doc  = { id: docSnap.id, ...docSnap.data() } as Record<string, any>
+  const plan = (profileSnap.data()?.plan as string) ?? 'free'
+  const chaptersCount = chaptersSnap.size
 
   // Gate Premium
   if (doc.is_premium && plan !== 'premium') {
@@ -52,24 +56,11 @@ export default async function CoursDetailPage({ params }: { params: Promise<{ id
     )
   }
 
-  // URL signée pour téléchargement (reste accessible, mais pas affichée)
-  const bucket = doc.is_premium ? 'pdfs-premium' : 'pdfs-public'
-  const fileName = doc.pdf_url?.split('/').pop() ?? ''
-  const { data: signed } = fileName
-    ? await supabase.storage.from(bucket).createSignedUrl(fileName, 900)
-    : { data: null }
-
-  const lvl = LEVEL_CONFIG[doc.level] ?? { label: doc.level, color: 'text-gray-600', bg: 'bg-gray-100' }
-  const isExam = doc.type === 'examen'
-  const subjectName = (doc.subjects as { name: string } | null)?.name
-  const hasText = !!(doc as Record<string, unknown>).text_content
-
-  // Compte les fiches disponibles
-  const { count: chaptersCount } = await supabase
-    .from('course_chapters')
-    .select('id', { count: 'exact', head: true })
-    .eq('document_id', id)
-    .eq('status', 'done')
+  const lvl       = LEVEL_CONFIG[doc.level] ?? { label: doc.level, color: 'text-gray-600', bg: 'bg-gray-100' }
+  const isExam    = doc.type === 'examen'
+  const hasText   = !!doc.text_content
+  // Pour les signed URLs PDF, on n'utilise plus Supabase Storage — on utilise l'URL publique
+  const signedUrl = doc.pdf_url ?? null
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6">
@@ -80,7 +71,6 @@ export default async function CoursDetailPage({ params }: { params: Promise<{ id
           {isExam ? 'Examens' : 'Cours'}
         </Link>
         <span>›</span>
-        {subjectName && <><span className="text-gray-500">{subjectName}</span><span>›</span></>}
         <span className="text-gray-700 truncate max-w-xs">{doc.title}</span>
       </div>
 
@@ -98,11 +88,6 @@ export default async function CoursDetailPage({ params }: { params: Promise<{ id
               <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${lvl.bg} ${lvl.color}`}>
                 {lvl.label}
               </span>
-              {subjectName && (
-                <span className="text-xs text-gray-500 bg-gray-100 px-2.5 py-1 rounded-full font-medium">
-                  {subjectName}
-                </span>
-              )}
               {doc.year && <span className="text-xs text-gray-400 font-medium">{doc.year}</span>}
               {doc.is_premium && (
                 <span className="text-xs bg-amber-100 text-amber-700 px-2.5 py-1 rounded-full font-bold">⭐ Premium</span>
@@ -117,9 +102,9 @@ export default async function CoursDetailPage({ params }: { params: Promise<{ id
 
           {/* Actions */}
           <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
-            {signed?.signedUrl && (
+            {signedUrl && (
               <a
-                href={signed.signedUrl}
+                href={signedUrl}
                 download
                 target="_blank"
                 rel="noopener noreferrer"
@@ -129,7 +114,7 @@ export default async function CoursDetailPage({ params }: { params: Promise<{ id
                 ⬇️ <span className="hidden sm:inline">Fichier</span>
               </a>
             )}
-            {!isExam && (chaptersCount ?? 0) > 0 && (
+            {!isExam && chaptersCount > 0 && (
               <Link
                 href={`/cours/${doc.id}/chapters`}
                 className="flex items-center gap-1.5 px-3 py-2.5 border border-violet-200 text-violet-700 bg-violet-50 rounded-xl text-sm font-bold hover:bg-violet-100 transition-colors"
@@ -151,20 +136,17 @@ export default async function CoursDetailPage({ params }: { params: Promise<{ id
       <FreeLimitGate type="cours" plan={plan}>
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
           {hasText ? (
-            <DocumentReaderClient
-              text={(doc as Record<string, unknown>).text_content as string}
-            />
+            <DocumentReaderClient text={doc.text_content as string} />
           ) : (
-            /* Fallback : document pas encore indexé — affiche message */
             <div className="p-12 text-center">
               <p className="text-4xl mb-4">⏳</p>
               <p className="text-gray-700 font-semibold mb-2">Contenu en cours de traitement</p>
               <p className="text-gray-400 text-sm max-w-xs mx-auto">
                 Le texte de ce document est en cours d'extraction. Reviens dans quelques minutes.
               </p>
-              {signed?.signedUrl && (
+              {signedUrl && (
                 <a
-                  href={signed.signedUrl}
+                  href={signedUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-block mt-6 px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 transition-colors"
@@ -179,4 +161,3 @@ export default async function CoursDetailPage({ params }: { params: Promise<{ id
     </div>
   )
 }
-

@@ -1,17 +1,5 @@
-import { createClient } from '@supabase/supabase-js'
+import { adminDb } from '../firebase/admin'
 import { embedQuery } from './embeddings'
-
-// Lazy — jamais instancié au build time
-let _admin: ReturnType<typeof createClient> | null = null
-function getAdmin() {
-  if (!_admin) {
-    _admin = createClient(
-      process.env['NEXT_PUBLIC_SUPABASE_URL']!,
-      process.env['SUPABASE_SERVICE_ROLE_KEY']!
-    )
-  }
-  return _admin
-}
 
 export interface ChunkResult {
   id: string
@@ -23,57 +11,99 @@ export interface ChunkResult {
   similarity: number
 }
 
+/**
+ * Recherche les chunks les plus pertinents via les embeddings.
+ * Firestore ne supporte pas la recherche vectorielle native,
+ * donc on récupère les candidats et on filtre côté serveur.
+ * En production, envisager Firebase Vector Search (Vertex AI) ou un service externe.
+ */
 export async function searchRelevantChunks(
   question: string,
   options: { matchCount?: number; minSimilarity?: number; documentId?: string } = {}
 ): Promise<ChunkResult[]> {
   const { matchCount = 5, minSimilarity = 0.72, documentId } = options
 
-  // Quand on a un document précis, on abaisse le seuil et on prend plus de chunks
-  // pour ne pas passer à côté du contexte pertinent
-  const effectiveSimilarity = documentId ? Math.min(minSimilarity, 0.45) : minSimilarity
-  const effectiveCount      = documentId ? Math.max(matchCount, 8)      : matchCount
+  const effectiveCount = documentId ? Math.max(matchCount, 8) : matchCount
 
-  let embedding: number[]
+  // Si on a un document précis, on récupère ses chunks et on calcule la similarité
+  if (documentId) {
+    let embedding: number[] | null = null
+    try {
+      embedding = await embedQuery(question)
+    } catch (err) {
+      console.warn('[vector-search] Embeddings unavailable, fallback direct chunks:', (err as Error).message)
+    }
+
+    const snap = await adminDb
+      .collection('document_chunks')
+      .where('document_id', '==', documentId)
+      .orderBy('chunk_index', 'asc')
+      .limit(60)
+      .get()
+
+    const chunks = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as (ChunkResult & Record<string, unknown>)[]
+
+    if (!embedding || embedding.length === 0) {
+      // Fallback sans embedding
+      return chunks.slice(0, effectiveCount).map((c) => ({ ...c, similarity: 1 } as ChunkResult))
+    }
+
+    // Calcul cosine similarity côté serveur
+    const withSim = chunks
+      .map((c) => {
+        const emb = (c as any).embedding as number[] | undefined
+        const sim = emb ? cosineSimilarity(embedding!, emb) : 0
+        return { ...c, similarity: sim } as ChunkResult
+      })
+      .filter((c) => c.similarity >= Math.min(minSimilarity, 0.45))
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, effectiveCount)
+
+    if (withSim.length < 2) {
+      return chunks.slice(0, effectiveCount).map((c) => ({ ...c, similarity: 1 } as ChunkResult))
+    }
+
+    return withSim
+  }
+
+  // Sans document : recherche globale — fallback sur premiers chunks
   try {
-    embedding = await embedQuery(question)
+    const embedding = await embedQuery(question)
+    if (!embedding || embedding.length === 0) return []
+
+    // Récupère un échantillon de chunks pour la recherche globale
+    const snap = await adminDb
+      .collection('document_chunks')
+      .limit(200)
+      .get()
+
+    const results = snap.docs
+      .map((d) => {
+        const data = d.data() as Record<string, unknown>
+        const emb  = data.embedding as number[] | undefined
+        const sim  = emb ? cosineSimilarity(embedding, emb) : 0
+        return { id: d.id, ...data, similarity: sim } as ChunkResult
+      })
+      .filter((c) => c.similarity >= minSimilarity)
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, matchCount)
+
+    return results
   } catch (err) {
-    console.warn('[vector-search] Embeddings unavailable, fallback direct chunks:', (err as Error).message)
-    if (documentId) return fetchFirstChunks(documentId, effectiveCount)
+    console.warn('[vector-search] Error:', (err as Error).message)
     return []
   }
-
-  const { data, error } = await getAdmin().rpc('search_chunks', {
-    query_embedding:  embedding,
-    match_count:      effectiveCount,
-    min_similarity:   effectiveSimilarity,
-    filter_document:  documentId ?? null,
-  })
-
-  if (error) {
-    console.warn('[vector-search] RPC error:', error.message)
-    if (documentId) return fetchFirstChunks(documentId, effectiveCount)
-    return []
-  }
-
-  const results = (data ?? []) as ChunkResult[]
-
-  // Moins de 2 résultats pour ce document → fallback sur les premiers chunks
-  if (documentId && results.length < 2) {
-    return fetchFirstChunks(documentId, effectiveCount)
-  }
-
-  return results
 }
 
-/** Fallback : premiers chunks du document par ordre, quand la recherche vectorielle échoue */
-async function fetchFirstChunks(documentId: string, limit: number): Promise<ChunkResult[]> {
-  const { data } = await getAdmin()
-    .from('document_chunks')
-    .select('id, document_id, content, chunk_index, page_number, metadata')
-    .eq('document_id', documentId)
-    .order('chunk_index')
-    .limit(limit)
-
-  return (data ?? []).map((c) => ({ ...c, similarity: 1 }))
+/** Similarité cosinus entre deux vecteurs */
+function cosineSimilarity(a: number[], b: number[]): number {
+  if (a.length !== b.length || a.length === 0) return 0
+  let dot = 0, normA = 0, normB = 0
+  for (let i = 0; i < a.length; i++) {
+    dot   += a[i] * b[i]
+    normA += a[i] * a[i]
+    normB += b[i] * b[i]
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB)
+  return denom === 0 ? 0 : dot / denom
 }

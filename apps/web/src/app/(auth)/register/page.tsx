@@ -1,7 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { registerWithEmail } from '@/lib/firebase/auth'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 
 const LEVELS = [
@@ -48,7 +49,7 @@ const LEVELS = [
 ]
 
 export default function RegisterPage() {
-  const supabase = createClient()
+  const router = useRouter()
 
   // Step 1 fields
   const [fullName, setFullName] = useState('')
@@ -84,22 +85,16 @@ export default function RegisterPage() {
     setLoading(true)
     setError(null)
 
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { full_name: fullName, study_level: level },
-        emailRedirectTo: `${location.origin}/auth/callback`,
-      },
-    })
-
-    if (error) {
-      setError(error.message)
-      setStep(1)
-    } else {
+    try {
+      await registerWithEmail(email, password, fullName, level)
       setSuccess(true)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Erreur lors de la création du compte'
+      setError(msg.includes('email-already-in-use') ? 'Cet email est déjà utilisé.' : msg)
+      setStep(1)
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   // ── SUCCESS ──

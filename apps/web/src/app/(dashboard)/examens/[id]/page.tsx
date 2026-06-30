@@ -1,4 +1,5 @@
-import { createClient } from '@/lib/supabase/server'
+import { getServerUser } from '@/lib/supabase/server'
+import { adminDb } from '@/lib/firebase/admin'
 import { notFound, redirect } from 'next/navigation'
 import Link from 'next/link'
 import { ExamenViewer } from './examen-viewer'
@@ -14,21 +15,17 @@ const LEVEL_CONFIG: Record<string, { label: string; bg: string; color: string }>
 
 export default async function ExamenDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getServerUser()
   if (!user) redirect('/login')
 
-  const { data: doc } = await supabase
-    .from('documents')
-    .select('*, subjects(id, name, level)')
-    .eq('id', id)
-    .eq('type', 'examen')
-    .single()
+  const docSnap = await adminDb.collection('documents').doc(id).get()
+  if (!docSnap.exists) notFound()
 
-  if (!doc) notFound()
+  const doc = { id: docSnap.id, ...docSnap.data() } as Record<string, any>
+  if (doc.type !== 'examen') notFound()
 
-  const { data: profile } = await supabase.from('users').select('plan').eq('id', user.id).single()
-  const plan = profile?.plan ?? 'free'
+  const profileSnap = await adminDb.collection('users').doc(user.uid).get()
+  const plan        = (profileSnap.data()?.plan as string) ?? 'free'
 
   // Gate contenu premium
   if (doc.is_premium && plan !== 'premium') {
@@ -47,45 +44,33 @@ export default async function ExamenDetailPage({ params }: { params: Promise<{ i
     )
   }
 
-  const bucket = doc.is_premium ? 'pdfs-premium' : 'pdfs-public'
-  const enonceFile = doc.pdf_url?.split('/').pop() ?? ''
-  const corrigeFile = doc.corrige_url ? doc.corrige_url.split('/').pop() ?? '' : null
-
-  // URLs signées 15 min
-  const [{ data: enonceSign }, corrigeSignResult] = await Promise.all([
-    supabase.storage.from(bucket).createSignedUrl(enonceFile, 900),
-    corrigeFile
-      ? supabase.storage.from(bucket).createSignedUrl(corrigeFile, 900)
-      : Promise.resolve(null),
+  // Exercices indexés par le RAG
+  const [exercisesSnap, contextChunksSnap] = await Promise.all([
+    adminDb.collection('document_chunks')
+      .where('document_id', '==', id)
+      .where('metadata.is_exercise', '==', true)
+      .orderBy('chunk_index', 'asc')
+      .limit(30)
+      .get(),
+    adminDb.collection('document_chunks')
+      .where('document_id', '==', id)
+      .orderBy('chunk_index', 'asc')
+      .limit(60)
+      .get(),
   ])
 
-  // Exercices indexés par le RAG
-  const { data: exercises } = await supabase
-    .from('document_chunks')
-    .select('id, content, chunk_index, page_number, metadata')
-    .eq('document_id', id)
-    .filter('metadata->>is_exercise', 'eq', 'true')
-    .order('chunk_index')
-    .limit(30)
+  const exercises    = exercisesSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
+  const contextChunks = contextChunksSnap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((c: any) => !c.metadata?.is_exercise)
 
-  // Chunks de contexte (non-exercices) pour détecter les chapitres et parties
-  const { data: contextChunks } = await supabase
-    .from('document_chunks')
-    .select('chunk_index, content')
-    .eq('document_id', id)
-    .neq('metadata->>is_exercise', 'true')
-    .order('chunk_index')
-    .limit(60)
-
-  const enonceUrl = enonceSign?.signedUrl ?? null
-  const corrigeUrl = (corrigeSignResult as { data?: { signedUrl: string } } | null)?.data?.signedUrl ?? null
-  const lvl = LEVEL_CONFIG[doc.level] ?? { label: doc.level, bg: 'bg-gray-100', color: 'text-gray-600' }
-  const subjectName = (doc.subjects as { name: string } | null)?.name
+  const enonceUrl  = doc.pdf_url ?? null
+  const corrigeUrl = doc.corrige_url ?? null
+  const lvl        = LEVEL_CONFIG[doc.level] ?? { label: doc.level, bg: 'bg-gray-100', color: 'text-gray-600' }
   const hasCorrige = !!doc.corrige_url
 
-  // Vérifie si le fichier est un PDF (sinon : DOCX ou TXT → afficher text_content)
-  const isPdf = doc.pdf_url?.toLowerCase().endsWith('.pdf') ?? false
-  const textContent = (doc as Record<string, unknown>).text_content as string | null
+  const isPdf      = doc.pdf_url?.toLowerCase().endsWith('.pdf') ?? false
+  const textContent = doc.text_content as string | null
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
@@ -127,10 +112,6 @@ export default async function ExamenDetailPage({ params }: { params: Promise<{ i
                 {doc.session === 'rattrapage' ? '🔄' : '✅'} Session {doc.session}
               </span>
             )}
-            {subjectName && (
-              <span className="text-xs text-gray-500">{subjectName}</span>
-            )}
-            {/* Badge corrigé */}
             {hasCorrige && !doc.is_premium && (
               <span className="text-xs bg-green-50 text-green-700 px-2.5 py-1 rounded-full font-medium border border-green-100">
                 ✅ Corrigé disponible
@@ -149,7 +130,6 @@ export default async function ExamenDetailPage({ params }: { params: Promise<{ i
           </div>
         </div>
 
-        {/* CTA Kelassi */}
         <Link
           href={`/tuteur?document=${doc.id}`}
           className="flex-shrink-0 inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-semibold hover:bg-emerald-700 transition-colors shadow-sm"
@@ -161,7 +141,6 @@ export default async function ExamenDetailPage({ params }: { params: Promise<{ i
       {/* Visionneuse avec gate freemium */}
       <FreeLimitGate type="exam" plan={plan}>
         {isPdf && enonceUrl ? (
-          /* Fichier PDF → visionneuse PDF avec exercices */
           <ExamenViewer
             docId={doc.id}
             title={doc.title}
@@ -170,11 +149,10 @@ export default async function ExamenDetailPage({ params }: { params: Promise<{ i
             enonceUrl={enonceUrl}
             corrigeUrl={corrigeUrl}
             corrigeIsPremium={!!doc.is_premium}
-            exercises={exercises ?? []}
-            contextChunks={contextChunks ?? []}
+            exercises={exercises}
+            contextChunks={contextChunks}
           />
         ) : textContent ? (
-          /* Fichier DOCX / TXT → afficher le texte extrait comme pour les cours */
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
             <DocumentReaderClient text={textContent} />
           </div>

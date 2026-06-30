@@ -1,45 +1,20 @@
-import { createClient } from '@/lib/supabase/server'
-import { createClient as createAdminClient } from '@supabase/supabase-js'
-
-const supabaseAdmin = createAdminClient(
-  process.env['NEXT_PUBLIC_SUPABASE_URL']!,
-  process.env['SUPABASE_SERVICE_ROLE_KEY']!
-)
+import { adminDb } from '@/lib/firebase/admin'
 
 async function getAnalytics() {
   try {
-    const [
-      { data: topDocs },
-      { data: activeSubs },
-      { data: recentQuestions },
-      { count: totalUsers },
-    ] = await Promise.all([
-      supabaseAdmin
-        .from('document_views')
-        .select('document_id, documents(title, type, level)')
-        .gte('viewed_at', new Date(Date.now() - 7 * 86400000).toISOString())
-        .limit(500),
-
-      supabaseAdmin
-        .from('subscriptions')
-        .select('plan, status, stripe_sub_id, cinetpay_ref, expires_at, created_at')
-        .eq('status', 'active'),
-
-      supabaseAdmin
-        .from('chat_messages')
-        .select('content, created_at')
-        .eq('role', 'user')
-        .order('created_at', { ascending: false })
-        .limit(50),
-
-      supabaseAdmin.from('users').select('id', { count: 'exact', head: true }),
+    const since7d = new Date(Date.now() - 7 * 86400000)
+    const [viewsSnap, subsSnap, messagesSnap, usersSnap] = await Promise.all([
+      adminDb.collection('document_views').where('viewed_at', '>=', since7d).limit(500).get(),
+      adminDb.collection('subscriptions').where('status', '==', 'active').get(),
+      adminDb.collection('chat_messages').where('role', '==', 'user').orderBy('created_at', 'desc').limit(50).get(),
+      adminDb.collection('users').count().get(),
     ])
 
     // Agrège les vues par document
     const viewsByDoc = new Map<string, { count: number; title: string; type: string; level: string }>()
-    for (const row of topDocs ?? []) {
-      const doc = row.documents as { title: string; type: string; level: string } | null
-      const cur = viewsByDoc.get(row.document_id) ?? { count: 0, title: doc?.title ?? '', type: doc?.type ?? '', level: doc?.level ?? '' }
+    for (const d of viewsSnap.docs) {
+      const row = d.data()
+      const cur = viewsByDoc.get(row.document_id) ?? { count: 0, title: row.title ?? '', type: row.type ?? '', level: row.level ?? '' }
       viewsByDoc.set(row.document_id, { ...cur, count: cur.count + 1 })
     }
     const topDocsSorted = [...viewsByDoc.entries()]
@@ -47,25 +22,23 @@ async function getAnalytics() {
       .sort((a, b) => b.count - a.count)
       .slice(0, 10)
 
-    const stripeCount = (activeSubs ?? []).filter((s) => s.stripe_sub_id).length
-    const cinetpayCount = (activeSubs ?? []).filter((s) => s.cinetpay_ref).length
+    const activeSubs = subsSnap.docs.map((d) => d.data())
+    const stripeCount = activeSubs.filter((s) => s.stripe_sub_id).length
+    const cinetpayCount = activeSubs.filter((s) => s.cinetpay_ref).length
 
     return {
       top_documents: topDocsSorted,
       revenue: {
-        active_subscriptions: (activeSubs ?? []).length,
+        active_subscriptions: activeSubs.length,
         stripe_count: stripeCount,
         cinetpay_count: cinetpayCount,
         monthly_revenue_fcfa: stripeCount * 2000 + cinetpayCount * 2000,
       },
-      recent_questions: (recentQuestions ?? []).slice(0, 20).map((q) => ({
-        content: q.content.slice(0, 120),
-        asked_at: q.created_at,
-      })),
-      totals: {
-        users: totalUsers ?? 0,
-        active_subs: (activeSubs ?? []).length,
-      },
+      recent_questions: messagesSnap.docs.slice(0, 20).map((d) => {
+        const q = d.data()
+        return { content: String(q.content ?? '').slice(0, 120), asked_at: q.created_at }
+      }),
+      totals: { users: usersSnap.data().count, active_subs: activeSubs.length },
     }
   } catch {
     return null
@@ -73,10 +46,7 @@ async function getAnalytics() {
 }
 
 export default async function AdminOverviewPage() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-
-  const analytics = user ? await getAnalytics() : null
+  const analytics = await getAnalytics()
 
   const totals = analytics?.totals ?? { users: 0, active_subs: 0 }
   const revenue = analytics?.revenue ?? { monthly_revenue_fcfa: 0, active_subscriptions: 0, stripe_count: 0, cinetpay_count: 0 }
