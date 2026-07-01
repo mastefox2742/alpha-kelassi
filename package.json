@@ -29,7 +29,8 @@
   "pnpm": {
     "overrides": {
       "@types/react": "^19.0.0",
-      "@types/react-dom": "^19.0.0"
+      "@types/react-dom": "^19.0.0",
+      "jose": "^5.9.0"
     }
   }
 }
