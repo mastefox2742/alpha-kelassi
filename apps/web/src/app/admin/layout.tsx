@@ -7,14 +7,18 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const user = await getServerUser()
   if (!user) redirect('/login')
 
-  let profileName = 'Admin'
+  // Vérification via custom claim Firebase (pas de Firestore requis)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if (!(user as any).admin) redirect('/dashboard')
+
+  let profileName = user.name ?? user.email ?? 'Admin'
+
+  // Tente d'enrichir le nom via Firestore (optionnel)
   try {
     const snap = await adminDb.collection('users').doc(user.id).get()
-    const d = snap.data()
-    if (d?.role !== 'admin') redirect('/dashboard')
-    profileName = d?.full_name ?? d?.email ?? 'Admin'
+    if (snap.exists) profileName = snap.data()?.full_name ?? profileName
   } catch {
-    redirect('/dashboard')
+    // Firestore indisponible — le custom claim suffit
   }
 
   return (
