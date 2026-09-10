@@ -10,6 +10,7 @@ const LEVEL_CONFIG: Record<string, { label: string; color: string; bg: string }>
   bac_a: { label: 'BAC A', color: 'text-amber-700',   bg: 'bg-amber-100' },
   bac_c: { label: 'BAC C', color: 'text-violet-700',  bg: 'bg-violet-100' },
   bac_d: { label: 'BAC D', color: 'text-emerald-700', bg: 'bg-emerald-100' },
+  bac_g: { label: 'BAC G', color: 'text-rose-700',    bg: 'bg-rose-100' },
 }
 
 export default async function CoursDetailPage({ params }: { params: Promise<{ id: string }> }) {
