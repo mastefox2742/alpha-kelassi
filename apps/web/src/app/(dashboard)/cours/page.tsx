@@ -18,6 +18,7 @@ const LEVEL_CONFIG: Record<string, {
   bac_a: { label: 'BAC A', color: 'text-amber-700',  bg: 'bg-amber-50',  border: 'border-amber-300',  headerBg: 'bg-amber-500',   headerText: 'text-white', dot: 'bg-amber-500'  },
   bac_c: { label: 'BAC C', color: 'text-violet-700', bg: 'bg-violet-50', border: 'border-violet-300', headerBg: 'bg-violet-500',  headerText: 'text-white', dot: 'bg-violet-500' },
   bac_d: { label: 'BAC D', color: 'text-emerald-700',bg: 'bg-emerald-50',border: 'border-emerald-300',headerBg: 'bg-emerald-500', headerText: 'text-white', dot: 'bg-emerald-500'},
+  bac_g: { label: 'BAC G', color: 'text-rose-700',   bg: 'bg-rose-50',   border: 'border-rose-300',   headerBg: 'bg-rose-500',    headerText: 'text-white', dot: 'bg-rose-500'   },
 }
 
 /* ── Icônes par matière ──────────────────────────────────────────────────── */
@@ -181,6 +182,7 @@ export default async function CoursPage({ searchParams }: { searchParams: Promis
     { value: 'bac_a', label: 'BAC A' },
     { value: 'bac_c', label: 'BAC C' },
     { value: 'bac_d', label: 'BAC D' },
+    { value: 'bac_g', label: 'BAC G' },
   ]
 
   return (
